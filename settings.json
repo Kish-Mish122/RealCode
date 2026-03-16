@@ -1,13 +1,15 @@
 {
     "font_family": "Consolas",
-    "font_size": 10,
+    "font_size": 13,
     "project_path": "D:/RealCode",
     "sidebar_width": 250,
+    "console_height": 594,
     "window_x": 0,
     "window_y": 0,
     "window_width": 1920,
     "window_height": 1041,
-    "auto_save": true,
+    "window_maximized": true,
+    "auto_save": false,
     "word_wrap": true,
     "tab_size": 4,
     "show_line_numbers": true,
@@ -16,7 +18,10 @@
     "minimap_enabled": true,
     "minimap_width": 80,
     "save_scroll_position": true,
-    "window_maximized": false,
+    "sidebar_visible": false,
+    "console_visible": false,
+    "explorer_position": "left",
+    "console_position": "bottom",
     "window_size": "1920x989+-148+95",
     "theme": "dark",
     "last_language": "python",
@@ -33,6 +38,5 @@
         "build/\u041a\u043e\u043f\u0438\u044f Visual Studio Code/warn-\u041a\u043e\u043f\u0438\u044f Visual Studio Code.txt"
     ],
     "indent_size": 4,
-    "theme_variant": "vs-dark",
-    "console_height": 200
+    "theme_variant": "vs-dark"
 }
