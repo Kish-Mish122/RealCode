@@ -12,4 +12,5 @@
 
 *The program is completely in Russian, please keep this in mind when installing, as there is no English translation.*
 
-###### RealCode has not been released, so it will not be able to download it yet.
+*RealCode building: pyinstaller ``--onefile --windowed --name "RealCode" main.py`` - where you can replace "RealCode" with your program name. After building, the finished build will appear in the dist folder.*
+*Check without building - ``python main.py``*
