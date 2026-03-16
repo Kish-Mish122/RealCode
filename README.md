@@ -10,4 +10,6 @@
 
 ##### Plus, you can also note: For those who may not understand the code, I made the arguments. Now, even if you don't understand the code, you can always look at the argument and figure out what kind of function it is.
 
+*The program is completely in Russian, please keep this in mind when installing, as there is no English translation.*
+
 ###### RealCode has not been released, so it will not be able to download it yet.
