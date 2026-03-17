@@ -29,6 +29,20 @@ import re
 from datetime import datetime
 import shutil
 
+# ========== DISCORD RICH PRESENCE ==========
+try:
+    from pypresence import Presence
+    import time
+    import threading
+    DISCORD_AVAILABLE = True
+except ImportError:
+    DISCORD_AVAILABLE = False
+    print("Discord Rich Presence не доступен. Установите: pip install pypresence")
+
+# Discord Client ID - создайте приложение на https://discord.com/developers/applications
+DISCORD_CLIENT_ID = "1479336248308011168"  # ЗАМЕНИТЕ НА СВОЙ!
+# ===========================================
+
 APP_NAME = "RealCode"
 VERSION = "2.9"
 CONFIG_FILE = "settings.json"
@@ -91,21 +105,18 @@ class Project:
         self.ensure_rlcode_folder()
         
         # Данные проекта
-        self.tabs = []  # Список вкладок
-        self.pinned_tabs = []  # Закрепленные вкладки
-        self.files = {}  # Словарь {tab: file_path}
-        self.file_contents = {}  # Словарь {tab: content}
+        self.tabs = []
+        self.pinned_tabs = []
+        self.files = {}
+        self.file_contents = {}
         self.current_tab = None
         
-        # Загружаем состояние
         self.load_state()
     
     def ensure_rlcode_folder(self):
-        """Создание скрытой папки .RLCode если её нет"""
         if not os.path.exists(self.rlcode_path):
             try:
                 os.makedirs(self.rlcode_path, exist_ok=True)
-                # На Windows делаем папку скрытой
                 if sys.platform == "win32":
                     import ctypes
                     ctypes.windll.kernel32.SetFileAttributesW(self.rlcode_path, 2)
@@ -113,13 +124,10 @@ class Project:
                 pass
     
     def get_file_path(self, filename):
-        """Получение полного пути к файлу в .RLCode"""
         return os.path.join(self.rlcode_path, filename)
     
     def load_state(self):
-        """Загрузка состояния проекта"""
         try:
-            # Загружаем состояние
             state_path = self.get_file_path(self.STATE_FILE)
             if os.path.exists(state_path):
                 with open(state_path, 'r', encoding='utf-8') as f:
@@ -132,7 +140,6 @@ class Project:
                     "window_state": {}
                 }
             
-            # Загружаем закрепленные
             pins_path = self.get_file_path(self.PINS_FILE)
             if os.path.exists(pins_path):
                 with open(pins_path, 'r', encoding='utf-8') as f:
@@ -140,7 +147,6 @@ class Project:
             else:
                 self.pins = {"pinned_files": []}
             
-            # Загружаем недавние
             recent_path = self.get_file_path(self.RECENT_FILE)
             if os.path.exists(recent_path):
                 with open(recent_path, 'r', encoding='utf-8') as f:
@@ -155,9 +161,7 @@ class Project:
             self.recent_files = []
     
     def save_state(self):
-        """Сохранение состояния проекта"""
         try:
-            # Собираем открытые файлы
             opened_files = []
             pinned_files = []
             
@@ -168,7 +172,6 @@ class Project:
                     if tab.pinned:
                         pinned_files.append(file_path)
             
-            # Последний активный файл
             last_active = None
             if self.current_tab:
                 last_active = self.files.get(self.current_tab)
@@ -176,16 +179,13 @@ class Project:
             self.state["last_opened_files"] = opened_files
             self.state["last_active_tab"] = last_active
             
-            # Сохраняем состояние
             with open(self.get_file_path(self.STATE_FILE), 'w', encoding='utf-8') as f:
                 json.dump(self.state, f, indent=4)
             
-            # Сохраняем закрепленные
             self.pins["pinned_files"] = pinned_files
             with open(self.get_file_path(self.PINS_FILE), 'w', encoding='utf-8') as f:
                 json.dump(self.pins, f, indent=4)
             
-            # Сохраняем недавние (только последние 20)
             self.recent_files = self.recent_files[:20]
             with open(self.get_file_path(self.RECENT_FILE), 'w', encoding='utf-8') as f:
                 json.dump(self.recent_files, f, indent=4)
@@ -194,39 +194,31 @@ class Project:
             print(f"Ошибка сохранения состояния проекта: {e}")
     
     def add_to_recent(self, file_path):
-        """Добавление файла в недавние"""
         if file_path in self.recent_files:
             self.recent_files.remove(file_path)
         self.recent_files.insert(0, file_path)
         self.save_state()
     
     def set_expanded_folders(self, expanded_folders):
-        """Сохранение раскрытых папок"""
         self.state["expanded_folders"] = expanded_folders
         self.save_state()
     
     def get_expanded_folders(self):
-        """Получение раскрытых папок"""
         return self.state.get("expanded_folders", [])
     
     def get_last_opened_files(self):
-        """Получение последних открытых файлов"""
         return self.state.get("last_opened_files", [])
     
     def get_last_active_tab(self):
-        """Получение последней активной вкладки"""
         return self.state.get("last_active_tab")
     
     def get_pinned_files(self):
-        """Получение списка закрепленных файлов"""
         return self.pins.get("pinned_files", [])
     
     def is_file_pinned(self, file_path):
-        """Проверка, закреплен ли файл"""
         return file_path in self.pins.get("pinned_files", [])
     
     def clear(self):
-        """Очистка данных проекта"""
         self.tabs.clear()
         self.pinned_tabs.clear()
         self.files.clear()
@@ -235,46 +227,38 @@ class Project:
 
 class VSColorScheme:
     """Цвета RealCode темы - Тёмно-зелёная версия"""
-    
-    # Основные фоны
-    BG_DARK = "#1e1e1e"        # Основной фон редактора
-    BG_MEDIUM = "#252526"       # Фон панелей (проводник, вкладки)
-    BG_LIGHT = "#2d2d2d"        # Светлый фон для элементов
-    
-    # Текст
-    FG = "#d4d4d4"              # Основной текст
-    FG_LIGHT = "#cccccc"         # Светлый текст
+    BG_DARK = "#1e1e1e"
+    BG_MEDIUM = "#252526"
+    BG_LIGHT = "#2d2d2d"
+    FG = "#d4d4d4"
+    FG_LIGHT = "#cccccc"
     
     # ЗЕЛЁНЫЕ АКЦЕНТЫ
-    ACCENT = "#2e7d32"           # Основной зелёный (кнопки, вкладки)
-    ACCENT_HOVER = "#1b5e20"      # При наведении - темнее
-    SELECTION = "#1b5e20"         # Выделение текста
+    ACCENT = "#2e7d32"        # Основной тёмно-зелёный
+    ACCENT_HOVER = "#1b5e20"   # При наведении - темнее
+    STATUS_BG = "#2e7d32"      # Строка состояния и верх консоли - зелёный
     
-    STATUS_BG = "#2e7d32"         # Цвет верхней панели консоли
-    CONSOLE_BG = "#1e1e1e"        # Фон самой консоли (текстовая область)
-    
-    # Остальные элементы
+    SELECTION = "#1b5e20"      # Выделение текста - зелёное
     LINE_NUMBERS = "#858585"
     BORDER = "#3e3e42"
     SCROLLBAR = "#3e3e42"
     TAB_ACTIVE = "#1e1e1e"
     TAB_INACTIVE = "#2d2d2d"
-    BUTTON_BG = "#2e7d32"         # Кнопки на панели инструментов
-    PINNED = "#ff6b6b"            # Закрепленные вкладки (красные)
+    CONSOLE_BG = "#1e1e1e"
+    BUTTON_BG = "#2e7d32"      # Кнопки - зелёные
+    PINNED = "#ff6b6b"
     
-    # Цвета синтаксиса (под зелёную тему)
-    KEYWORD = "#81c784"            # Светло-зелёный
-    STRING = "#ce9178"             # Оранжеватый
-    COMMENT = "#6a9955"            # Тёмно-зелёный
-    NUMBER = "#b5cea8"             # Светло-зелёный
-    FUNCTION = "#dcdcaa"           # Жёлтый
-    CLASS = "#4ec9b0"              # Бирюзовый
-    DECORATOR = "#c586c0"           # Розовый
-    BUILTIN = "#4ec9b0"             # Бирюзовый
+    # Цвета синтаксиса
+    KEYWORD = "#81c784"        # Светло-зелёный
+    STRING = "#ce9178"
+    COMMENT = "#6a9955"        # Тёмно-зелёный
+    NUMBER = "#b5cea8"
+    FUNCTION = "#dcdcaa"
+    CLASS = "#4ec9b0"
+    DECORATOR = "#c586c0"
+    BUILTIN = "#4ec9b0"
 
 class WelcomeScreen:
-    """Экран-заставка при отсутствии открытых файлов"""
-    
     def __init__(self, parent, app_instance):
         self.parent = parent
         self.app = app_instance
@@ -282,14 +266,11 @@ class WelcomeScreen:
         self.create_welcome_screen()
     
     def create_welcome_screen(self):
-        """Создание экрана-заставки"""
         self.frame = tk.Frame(self.parent, bg=VSColorScheme.BG_DARK)
         
-        # Центральный контейнер
         center_frame = tk.Frame(self.frame, bg=VSColorScheme.BG_DARK)
         center_frame.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
         
-        # Название приложения
         title_label = tk.Label(
             center_frame,
             text=APP_NAME,
@@ -299,7 +280,6 @@ class WelcomeScreen:
         )
         title_label.pack(pady=(0, 10))
         
-        # Версия
         version_label = tk.Label(
             center_frame,
             text=f"Версия {VERSION}",
@@ -309,11 +289,9 @@ class WelcomeScreen:
         )
         version_label.pack(pady=(0, 40))
         
-        # Быстрые действия
         actions_frame = tk.Frame(center_frame, bg=VSColorScheme.BG_DARK)
         actions_frame.pack(pady=20)
         
-        # Кнопка "Новый файл"
         new_btn = tk.Label(
             actions_frame,
             text="📄  Новый файл",
@@ -329,7 +307,6 @@ class WelcomeScreen:
         new_btn.bind('<Leave>', lambda e: new_btn.configure(bg=VSColorScheme.BG_LIGHT))
         new_btn.bind('<Button-1>', lambda e: self.app.add_new_tab())
         
-        # Кнопка "Открыть файл"
         open_btn = tk.Label(
             actions_frame,
             text="📂  Открыть файл",
@@ -345,7 +322,6 @@ class WelcomeScreen:
         open_btn.bind('<Leave>', lambda e: open_btn.configure(bg=VSColorScheme.BG_LIGHT))
         open_btn.bind('<Button-1>', lambda e: self.app.open_file())
         
-        # Кнопка "Открыть папку"
         folder_btn = tk.Label(
             actions_frame,
             text="📁  Открыть папку",
@@ -361,7 +337,6 @@ class WelcomeScreen:
         folder_btn.bind('<Leave>', lambda e: folder_btn.configure(bg=VSColorScheme.BG_LIGHT))
         folder_btn.bind('<Button-1>', lambda e: self.app.open_folder())
         
-        # Горячие клавиши
         shortcuts_frame = tk.Frame(center_frame, bg=VSColorScheme.BG_DARK)
         shortcuts_frame.pack(pady=30)
         
@@ -376,7 +351,6 @@ class WelcomeScreen:
             ("F1", "Настройки")
         ]
         
-        # Разбиваем на две колонки
         left_col = tk.Frame(shortcuts_frame, bg=VSColorScheme.BG_DARK)
         left_col.pack(side=tk.LEFT, padx=20)
         
@@ -432,18 +406,14 @@ class WelcomeScreen:
             desc_label.pack(side=tk.LEFT, padx=5)
     
     def hide(self):
-        """Скрыть экран-заставку"""
         if self.frame and self.frame.winfo_ismapped():
             self.frame.pack_forget()
     
     def show(self):
-        """Показать экран-заставку"""
         if self.frame and not self.frame.winfo_ismapped():
             self.frame.pack(fill=tk.BOTH, expand=True)
 
 class LineNumbers(tk.Canvas):
-    """Номера строк слева от редактора"""
-    
     def __init__(self, parent, text_widget, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.text_widget = text_widget
@@ -454,7 +424,6 @@ class LineNumbers(tk.Canvas):
             self.update_numbers()
     
     def attach_to_text_widget(self):
-        """Привязка к текстовому виджету"""
         self.text_widget.bind('<KeyRelease>', self.on_change)
         self.text_widget.bind('<MouseWheel>', self.on_change)
         self.text_widget.bind('<Button-4>', self.on_change)
@@ -463,11 +432,9 @@ class LineNumbers(tk.Canvas):
         self.text_widget.bind('<<Modified>>', self.on_change)
     
     def on_change(self, event=None):
-        """Обновление номеров строк при изменениях"""
         self.update_numbers()
     
     def update_numbers(self):
-        """Обновление номеров строк"""
         self.delete("all")
         
         if not self.text_widget:
@@ -493,8 +460,6 @@ class LineNumbers(tk.Canvas):
             pass
 
 class Minimap(tk.Canvas):
-    """Миникарта для быстрой навигации по коду"""
-    
     def __init__(self, parent, text_widget, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.text_widget = text_widget
@@ -520,7 +485,6 @@ class Minimap(tk.Canvas):
             self.update_minimap()
     
     def attach_to_text_widget(self):
-        """Привязка к текстовому виджету"""
         self.text_widget.bind('<KeyRelease>', self.schedule_update)
         self.text_widget.bind('<MouseWheel>', self.on_editor_scroll)
         self.text_widget.bind('<Button-4>', self.on_editor_scroll)
@@ -529,13 +493,11 @@ class Minimap(tk.Canvas):
         self.text_widget.bind('<<Modified>>', self.schedule_update)
     
     def schedule_update(self, event=None):
-        """Планирование обновления с задержкой"""
         if self.update_after_id:
             self.after_cancel(self.update_after_id)
         self.update_after_id = self.after(200, self.update_minimap)
     
     def update_minimap(self, event=None):
-        """Обновление содержимого миникарты"""
         if not self.text_widget or not self.text_widget.winfo_exists():
             return
         
@@ -598,7 +560,6 @@ class Minimap(tk.Canvas):
             print(f"Minimap error: {e}")
     
     def draw_visible_area(self):
-        """Отрисовка видимой области"""
         try:
             if not hasattr(self, 'scale_factor') or not self.content_lines:
                 return
@@ -626,32 +587,26 @@ class Minimap(tk.Canvas):
             pass
     
     def on_editor_scroll(self, event):
-        """Обработка прокрутки редактора"""
         self.draw_visible_area()
     
     def on_minimap_scroll(self, event):
-        """Обработка прокрутки миникарты колесиком"""
         if hasattr(self, 'scale_factor') and self.content_lines:
             delta = -5 if event.delta > 0 else 5
             self.text_widget.yview_scroll(delta, "units")
             self.draw_visible_area()
     
     def on_click(self, event):
-        """Обработка клика по миникарте"""
         self.dragging = True
         self.scroll_to_position(event.y)
     
     def on_drag(self, event):
-        """Обработка перетаскивания"""
         if self.dragging:
             self.scroll_to_position(event.y)
     
     def on_release(self, event):
-        """Обработка отпускания"""
         self.dragging = False
     
     def scroll_to_position(self, y):
-        """Прокрутка к позиции"""
         try:
             if not hasattr(self, 'scale_factor') or not self.content_lines:
                 return
@@ -671,8 +626,6 @@ class Minimap(tk.Canvas):
             pass
 
 class FindDialog:
-    """Диалог поиска (Ctrl+F)"""
-    
     def __init__(self, parent, text_widget):
         self.parent = parent
         self.text_widget = text_widget
@@ -731,7 +684,6 @@ class FindDialog:
         ).pack(side=tk.LEFT, padx=5)
     
     def find(self):
-        """Поиск текста"""
         search_text = self.search_var.get()
         if not search_text:
             return
@@ -752,8 +704,6 @@ class FindDialog:
             self.text_widget.see(tk.INSERT)
 
 class SyntaxHighlighter:
-    """Подсветка синтаксиса Python"""
-    
     def __init__(self, text_widget):
         self.text = text_widget
         self.update_after_id = None
@@ -776,7 +726,6 @@ class SyntaxHighlighter:
         }
     
     def setup_tags(self):
-        """Настройка цветовых тегов"""
         self.text.tag_configure("keyword", foreground=VSColorScheme.KEYWORD)
         self.text.tag_configure("builtin", foreground=VSColorScheme.BUILTIN)
         self.text.tag_configure("decorator", foreground=VSColorScheme.DECORATOR)
@@ -787,7 +736,6 @@ class SyntaxHighlighter:
         self.text.tag_configure("number", foreground=VSColorScheme.NUMBER)
     
     def should_highlight(self):
-        """Проверка, нужно ли применять подсветку"""
         if not self.highlight_enabled:
             return False
         
@@ -795,7 +743,6 @@ class SyntaxHighlighter:
         return content_length < self.max_file_size
     
     def highlight(self, force=False):
-        """Применение подсветки"""
         if not self.should_highlight():
             return
         
@@ -816,7 +763,6 @@ class SyntaxHighlighter:
             pass
     
     def _apply_pattern(self, tag_name, pattern, text):
-        """Применение одного паттерна подсветки"""
         for match in re.finditer(pattern, text, re.MULTILINE):
             try:
                 start = f"1.0+{match.start()}c"
@@ -826,7 +772,6 @@ class SyntaxHighlighter:
                 pass
     
     def incremental_highlight(self, start_line=1, end_line=None):
-        """Инкрементальная подсветка только измененной области"""
         if not self.should_highlight():
             return
         
@@ -852,8 +797,6 @@ class SyntaxHighlighter:
             pass
 
 class ModernTab(tk.Frame):
-    """Вкладка в стиле VS Code с поддержкой закрепления"""
-    
     def __init__(self, parent, title, close_callback, select_callback, pin_callback, *args, **kwargs):
         super().__init__(parent, bg=VSColorScheme.TAB_INACTIVE, height=45, width=180)
         self.pack_propagate(False)
@@ -869,7 +812,6 @@ class ModernTab(tk.Frame):
         
         self.configure(cursor="hand2")
         
-        # Иконка закрепления
         self.pin_btn = tk.Label(
             self,
             text="📌",
@@ -880,7 +822,6 @@ class ModernTab(tk.Frame):
         )
         self.pin_btn.place(x=5, y=12, width=20, height=20)
         
-        # Заголовок
         self.title_label = tk.Label(
             self,
             text=title,
@@ -893,7 +834,6 @@ class ModernTab(tk.Frame):
         )
         self.title_label.place(x=30, y=0, width=120, height=45)
         
-        # Кнопка закрытия
         self.close_btn = tk.Label(
             self,
             text="✕",
@@ -904,7 +844,6 @@ class ModernTab(tk.Frame):
         )
         self.close_btn.place(x=155, y=10, width=20, height=25)
         
-        # Привязка событий
         self.bind('<Button-1>', self.on_select)
         self.title_label.bind('<Button-1>', self.on_select)
         self.pin_btn.bind('<Button-1>', self.on_pin)
@@ -958,7 +897,6 @@ class ModernTab(tk.Frame):
         self.select_callback(self)
     
     def on_pin(self, e):
-        """Обработка закрепления/открепления"""
         self.pinned = not self.pinned
         if self.pinned:
             self.pin_btn.configure(fg=VSColorScheme.PINNED, text="📍")
@@ -986,16 +924,12 @@ class ModernTab(tk.Frame):
         self.title_label.config(text=text)
     
     def save_scroll_position(self, position):
-        """Сохранение позиции прокрутки"""
         self.scroll_position = position
     
     def get_scroll_position(self):
-        """Получение сохраненной позиции прокрутки"""
         return self.scroll_position
 
 class SettingsDialog:
-    """Диалог настроек"""
-    
     def __init__(self, parent, config, callback):
         self.parent = parent
         self.config = config.copy()
@@ -1023,7 +957,6 @@ class SettingsDialog:
         notebook = ttk.Notebook(self.window)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Вкладка "Редактор"
         editor_frame = tk.Frame(notebook, bg=VSColorScheme.BG_MEDIUM)
         notebook.add(editor_frame, text="Редактор")
         
@@ -1110,7 +1043,6 @@ class SettingsDialog:
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=5, padx=10)
         row += 1
         
-        # Вкладка "Окна"
         windows_frame = tk.Frame(notebook, bg=VSColorScheme.BG_MEDIUM)
         notebook.add(windows_frame, text="Окна")
         
@@ -1200,6 +1132,142 @@ class SettingsDialog:
         self.callback(self.config)
         self.window.destroy()
 
+# ========== DISCORD RICH PRESENCE КЛАСС ==========
+class DiscordPresence:
+    """Управление Discord Rich Presence"""
+    
+    def __init__(self, app):
+        self.app = app
+        self.client_id = DISCORD_CLIENT_ID
+        self.rpc = None
+        self.connected = False
+        self.thread_running = False
+        self.update_thread = None
+        self.start_time = time.time()
+        self.current_state = "editing"  # editing, running, idle
+        
+        if DISCORD_AVAILABLE:
+            self.connect()
+    
+    def connect(self):
+        """Подключение к Discord"""
+        try:
+            self.rpc = Presence(self.client_id)
+            self.rpc.connect()
+            self.connected = True
+            print("✅ Discord Rich Presence подключен")
+            
+            self.thread_running = True
+            self.update_thread = threading.Thread(target=self.update_loop, daemon=True)
+            self.update_thread.start()
+            
+        except Exception as e:
+            print(f"❌ Ошибка подключения к Discord: {e}")
+            self.connected = False
+    
+    def disconnect(self):
+        """Отключение от Discord"""
+        self.thread_running = False
+        if self.rpc:
+            try:
+                self.rpc.close()
+            except:
+                pass
+        self.connected = False
+    
+    def update_loop(self):
+        """Поток для обновления Presence"""
+        while self.thread_running:
+            try:
+                self.update_presence()
+                time.sleep(15)
+            except:
+                pass
+    
+    def set_state(self, state):
+        """Установка состояния: editing, running, idle"""
+        self.current_state = state
+        self.update_presence()
+    
+    def get_file_info(self):
+        """Получение информации о текущем файле"""
+        if not self.app.current_project or not self.app.current_project.current_tab:
+            return "Без имени", "unknown"
+        
+        filename = self.app.current_project.files.get(self.app.current_project.current_tab)
+        if not filename:
+            return "Без имени", "unknown"
+        
+        name = os.path.basename(filename)
+        ext = os.path.splitext(name)[1].lower()
+        
+        file_type = "unknown"
+        if ext == '.py':
+            file_type = "python"
+        elif ext in ['.js', '.jsx', '.ts', '.tsx']:
+            file_type = "javascript"
+        elif ext in ['.html', '.htm']:
+            file_type = "html"
+        elif ext == '.css':
+            file_type = "css"
+        elif ext == '.json':
+            file_type = "json"
+        elif ext in ['.md', '.txt']:
+            file_type = "text"
+        
+        return name, file_type
+    
+    def update_presence(self):
+        """Обновление статуса в Discord"""
+        if not self.connected or not self.rpc:
+            return
+        
+        try:
+            filename, file_type = self.get_file_info()
+            
+            project_name = "Нет проекта"
+            if self.app.current_project:
+                project_name = self.app.current_project.name
+            
+            files_count = 0
+            if self.app.current_project:
+                files_count = len(self.app.current_project.tabs)
+            
+            state_text = {
+                "editing": "✏️ Редактирование",
+                "running": "▶️ Запуск кода",
+                "idle": "💤 В ожидании"
+            }.get(self.current_state, "✏️ Редактирование")
+            
+            details = f"{filename} • {project_name}"
+            
+            large_image = "realcode_logo"
+            large_text = f"RealCode v{VERSION}"
+            
+            small_image = file_type if file_type != "unknown" else "file"
+            small_text = file_type.upper() if file_type != "unknown" else "Файл"
+            
+            buttons = [
+                {"label": "📂 Открыть проект", "url": "https://github.com/K1sh-M1sh/RealCode"},
+                {"label": "⭐ GitHub", "url": "https://github.com/K1sh-M1sh/RealCode"}
+            ]
+            
+            self.rpc.update(
+                state=state_text,
+                details=details,
+                start=self.start_time,
+                large_image=large_image,
+                large_text=large_text,
+                small_image=small_image,
+                small_text=small_text,
+                buttons=buttons,
+                party_size=[files_count, 10]
+            )
+        except Exception as e:
+            print(f"Ошибка обновления Discord: {e}")
+            self.connected = False
+# ===============================================
+
 class CodeEditorApp:
     def __init__(self, root):
         self.root = root
@@ -1214,8 +1282,11 @@ class CodeEditorApp:
             pass
         
         # Данные приложения
-        self.current_project = None  # Текущий проект
-        self.projects = {}  # Словарь {path: Project}
+        self.current_project = None
+        self.projects = {}
+        
+        # Discord
+        self.discord = None
         
         self.highlighter = None
         self._highlight_after_id = None
@@ -1238,13 +1309,14 @@ class CodeEditorApp:
         self.create_widgets()
         self.bind_shortcuts()
         
-        # Пытаемся загрузить последний проект
+        # Инициализируем Discord
+        self.init_discord()
+        
         last_folder = self.config.get("last_opened_folder", ".")
         if os.path.exists(last_folder):
             self.load_project(last_folder)
         else:
             self.load_project_tree()
-            # Если нет проекта, показываем Welcome screen
             self.show_welcome_screen()
         
         self.original_stdout = sys.stdout
@@ -1252,16 +1324,36 @@ class CodeEditorApp:
         sys.stdout = self
         sys.stderr = self
     
+    def init_discord(self):
+        """Инициализация Discord Rich Presence"""
+        try:
+            self.discord = DiscordPresence(self)
+        except Exception as e:
+            print(f"Ошибка инициализации Discord: {e}")
+            self.discord = None
+    
+    def update_discord(self):
+        """Обновление Discord Presence"""
+        if self.discord:
+            try:
+                self.discord.update_presence()
+            except:
+                pass
+    
+    def set_discord_state(self, state):
+        """Установка состояния Discord"""
+        if self.discord:
+            try:
+                self.discord.set_state(state)
+            except:
+                pass
+    
     def load_project(self, path):
-        """Загрузка проекта"""
-        # Сохраняем текущий проект если есть
         if self.current_project:
             self.save_project_state()
-            # Очищаем вкладки текущего проекта из UI
             for tab in self.current_project.tabs[:]:
                 self.remove_tab_from_ui(tab)
         
-        # Получаем или создаем проект
         if path not in self.projects:
             self.projects[path] = Project(path)
         
@@ -1269,7 +1361,6 @@ class CodeEditorApp:
         self.config["project_path"] = path
         self.config["last_opened_folder"] = path
         
-        # Добавляем в недавние проекты
         recent = self.config.get("recent_projects", [])
         if path in recent:
             recent.remove(path)
@@ -1277,53 +1368,42 @@ class CodeEditorApp:
         self.config["recent_projects"] = recent[:10]
         save_config(self.config)
         
-        # Обновляем UI
         self.folder_label.config(text=os.path.basename(path))
         self.load_project_tree()
         
-        # Восстанавливаем состояние проекта
         self.restore_project_state()
     
     def save_project_state(self):
-        """Сохранение состояния текущего проекта"""
         if not self.current_project:
             return
         
-        # Сохраняем данные из UI в проект
         if self.editor and self.current_project.current_tab:
             self.current_project.file_contents[self.current_project.current_tab] = self.editor.get("1.0", tk.END)
         
-        # Сохраняем состояние
         self.current_project.save_state()
     
     def restore_project_state(self):
-        """Восстановление состояния текущего проекта"""
         if not self.current_project:
             self.show_welcome_screen()
             return
         
-        # Получаем последние открытые файлы
         last_files = self.current_project.get_last_opened_files()
         pinned_files = self.current_project.get_pinned_files()
         
         if last_files:
-            # Восстанавливаем файлы
             for file_path in last_files:
                 if os.path.exists(file_path):
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
                             content = f.read()
                         
-                        # Определяем, закреплен ли файл
                         is_pinned = file_path in pinned_files
                         self.add_new_tab(filename=file_path, content=content, restore=True, pinned=is_pinned)
                     except Exception as e:
                         print(f"Ошибка загрузки файла {file_path}: {e}")
             
-            # Переупорядочиваем вкладки (закрепленные слева)
             self.reorder_tabs()
             
-            # Восстанавливаем последнюю активную вкладку
             last_tab_file = self.current_project.get_last_active_tab()
             if last_tab_file:
                 for tab in self.current_project.tabs:
@@ -1331,17 +1411,13 @@ class CodeEditorApp:
                         self.select_tab(tab)
                         break
             elif self.current_project.tabs:
-                # Если нет последней активной, выбираем первую
                 self.select_tab(self.current_project.tabs[0])
             
-            # Скрываем welcome screen так как есть вкладки
             self.hide_welcome_screen()
         else:
-            # Если нет файлов, показываем welcome screen
             self.show_welcome_screen()
     
     def remove_tab_from_ui(self, tab):
-        """Удаление вкладки из UI"""
         if tab in self.current_project.pinned_tabs:
             self.current_project.pinned_tabs.remove(tab)
         if tab in self.current_project.tabs:
@@ -1353,7 +1429,6 @@ class CodeEditorApp:
         tab.destroy()
     
     def setup_window(self):
-        """Настройка окна с сохранением позиции и размера"""
         x = self.config.get("window_x", 100)
         y = self.config.get("window_y", 100)
         width = self.config.get("window_width", 1300)
@@ -1368,7 +1443,6 @@ class CodeEditorApp:
             self.root.state('zoomed')
     
     def create_menu(self):
-        """Создание меню"""
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
         
@@ -1444,9 +1518,6 @@ class CodeEditorApp:
         help_menu.add_command(label="О программе", command=self.show_about)
     
     def create_widgets(self):
-        """Создание всех виджетов"""
-        
-        # Верхняя панель с кнопками
         toolbar = tk.Frame(self.root, bg=VSColorScheme.BG_MEDIUM, height=45)
         toolbar.pack(fill=tk.X)
         toolbar.pack_propagate(False)
@@ -1476,11 +1547,9 @@ class CodeEditorApp:
             btn.bind('<Leave>', lambda e, b=btn: b.configure(bg=VSColorScheme.BG_MEDIUM))
             btn.bind('<Button-1>', lambda e, c=cmd: c())
         
-        # Основной контейнер
         main = tk.Frame(self.root, bg=VSColorScheme.BG_DARK)
         main.pack(fill=tk.BOTH, expand=True)
         
-        # Главный PanedWindow
         self.main_paned = tk.PanedWindow(
             main,
             orient=tk.HORIZONTAL,
@@ -1491,7 +1560,6 @@ class CodeEditorApp:
         )
         self.main_paned.pack(fill=tk.BOTH, expand=True)
         
-        # Левая/правая панель (проводник)
         self.explorer_frame = tk.Frame(self.main_paned, bg=VSColorScheme.BG_MEDIUM)
         
         explorer_header = tk.Frame(self.explorer_frame, bg=VSColorScheme.BG_MEDIUM)
@@ -1581,7 +1649,6 @@ class CodeEditorApp:
         self.file_tree.bind("<Double-1>", self.on_file_double_click)
         self.file_tree.bind("<<TreeviewOpen>>", self.on_tree_open)
         
-        # Центральная область
         self.center_paned = tk.PanedWindow(
             self.main_paned,
             orient=tk.VERTICAL,
@@ -1591,7 +1658,6 @@ class CodeEditorApp:
             sashcursor="sb_v_double_arrow"
         )
         
-        # Область редактора
         self.editor_area = tk.Frame(self.center_paned, bg=VSColorScheme.BG_DARK)
         
         self.tab_bar = tk.Frame(self.editor_area, bg=VSColorScheme.BG_MEDIUM, height=55)
@@ -1669,7 +1735,6 @@ class CodeEditorApp:
         
         self.highlighter = SyntaxHighlighter(self.editor)
         
-        # Консоль
         self.console_area = tk.Frame(self.center_paned, bg=VSColorScheme.BG_DARK)
         
         console_header = tk.Frame(self.console_area, bg=VSColorScheme.STATUS_BG, height=25)
@@ -1756,7 +1821,6 @@ class CodeEditorApp:
         if console_pos == "top":
             self.center_paned.paneconfig(self.editor_area, after=self.console_area)
         
-        # Строка состояния
         status = tk.Frame(self.root, bg=VSColorScheme.STATUS_BG, height=25)
         status.pack(side=tk.BOTTOM, fill=tk.X)
         status.pack_propagate(False)
@@ -1782,23 +1846,18 @@ class CodeEditorApp:
         self.pos_label.pack(side=tk.RIGHT)
     
     def show_welcome_screen(self):
-        """Показать экран приветствия"""
         if self.welcome_screen and self.editor_container:
-            # Скрываем редактор и показываем welcome screen
             self.editor_container.pack_forget()
             self.welcome_screen.show()
-            # Очищаем редактор
             if self.editor:
                 self.editor.delete("1.0", tk.END)
     
     def hide_welcome_screen(self):
-        """Скрыть экран приветствия"""
         if self.welcome_screen and self.editor_container:
             self.welcome_screen.hide()
             self.editor_container.pack(fill=tk.BOTH, expand=True)
     
     def show_editor_context_menu(self, event):
-        """Показать контекстное меню редактора"""
         if not self.current_project or not self.current_project.current_tab:
             return
             
@@ -1814,7 +1873,6 @@ class CodeEditorApp:
         menu.post(event.x_root, event.y_root)
     
     def on_editor_scroll(self, *args):
-        """Обработка прокрутки скроллбаром редактора"""
         if self.editor:
             self.editor.yview(*args)
             self.line_numbers.update_numbers()
@@ -1822,7 +1880,6 @@ class CodeEditorApp:
                 self.minimap.draw_visible_area()
     
     def on_editor_scrollbar_move(self, *args):
-        """Обновление позиции скроллбара"""
         if self.editor_scrollbar:
             self.editor_scrollbar.set(*args)
             self.line_numbers.update_numbers()
@@ -1830,14 +1887,12 @@ class CodeEditorApp:
                 self.minimap.draw_visible_area()
     
     def on_editor_wheel(self, event):
-        """Обработка колесика мыши в редакторе"""
         if self.editor:
             self.line_numbers.update_numbers()
             if self.minimap:
                 self.minimap.draw_visible_area()
     
     def on_scroll(self, event=None):
-        """Оптимизация при прокрутке"""
         self.line_numbers.update_numbers()
         
         if self.minimap:
@@ -1846,19 +1901,16 @@ class CodeEditorApp:
             self._minimap_scroll_id = self.root.after(100, self.update_minimap_after_scroll)
     
     def update_minimap_after_scroll(self):
-        """Обновление миникарты после прокрутки"""
         if self.minimap:
             self.minimap.draw_visible_area()
         self._minimap_scroll_id = None
     
     def update_minimap_delayed(self):
-        """Отложенное обновление миникарты"""
         if self.minimap:
             self.minimap.schedule_update()
         self._minimap_after_id = None
     
     def toggle_explorer(self):
-        """Переключение видимости проводника"""
         if self.explorer_visible:
             self.main_paned.forget(self.explorer_frame)
             self.explorer_visible = False
@@ -1874,7 +1926,6 @@ class CodeEditorApp:
         self.config["sidebar_visible"] = self.explorer_visible
     
     def toggle_console(self):
-        """Переключение видимости консоли"""
         if self.console_visible:
             self.center_paned.forget(self.console_area)
             self.console_visible = False
@@ -1890,7 +1941,6 @@ class CodeEditorApp:
         self.config["console_visible"] = self.console_visible
     
     def move_explorer(self):
-        """Перемещение проводника"""
         new_pos = self.explorer_pos_var.get()
         old_pos = self.config.get("explorer_position")
         
@@ -1916,7 +1966,6 @@ class CodeEditorApp:
                 self.main_paned.add(self.explorer_frame, width=current_width)
     
     def move_console(self):
-        """Перемещение консоли"""
         new_pos = self.console_pos_var.get()
         old_pos = self.config.get("console_position")
         
@@ -1942,11 +1991,9 @@ class CodeEditorApp:
                 self.center_paned.add(self.editor_area)
     
     def on_tree_open(self, event):
-        """Обработка открытия папки в дереве"""
         if not self.current_project:
             return
         
-        # Сохраняем раскрытые папки
         expanded = []
         for item in self.file_tree.get_children():
             if self.file_tree.item(item, "open"):
@@ -1957,21 +2004,17 @@ class CodeEditorApp:
         self.current_project.set_expanded_folders(expanded)
     
     def open_folder(self):
-        """Открытие папки"""
         folder = filedialog.askdirectory(
             initialdir=self.config.get("last_opened_folder", "."),
             title="Выберите папку проекта"
         )
         
         if folder:
-            # Загружаем новый проект
             self.load_project(folder)
             self.status_label.config(text=f"Открыта папка: {folder}")
     
     def add_new_tab(self, filename=None, content="", restore=False, pinned=False):
-        """Добавление новой вкладки"""
         if not self.current_project:
-            # Если нет проекта, создаем временный
             temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
             os.makedirs(temp_path, exist_ok=True)
             self.load_project(temp_path)
@@ -1985,7 +2028,6 @@ class CodeEditorApp:
             self.toggle_pin
         )
         
-        # Устанавливаем состояние закрепления
         if pinned:
             tab.pinned = True
             tab.pin_btn.configure(fg=VSColorScheme.PINNED, text="📍")
@@ -1997,11 +2039,9 @@ class CodeEditorApp:
         self.current_project.files[tab] = filename
         self.current_project.file_contents[tab] = content
         
-        # Если это первая вкладка, скрываем welcome screen
         if len(self.current_project.tabs) == 1:
             self.hide_welcome_screen()
         
-        # Если это не восстановление, добавляем в недавние
         if filename and not restore:
             self.current_project.add_to_recent(filename)
         
@@ -2013,7 +2053,6 @@ class CodeEditorApp:
         return tab
     
     def toggle_pin(self, tab):
-        """Закрепление/открепление вкладки"""
         if not self.current_project:
             return
         
@@ -2028,7 +2067,6 @@ class CodeEditorApp:
         self.current_project.save_state()
     
     def reorder_tabs(self):
-        """Переупорядочивание вкладок: закрепленные слева"""
         if not self.current_project:
             return
         
@@ -2047,7 +2085,6 @@ class CodeEditorApp:
             self.current_project.tabs = new_order
     
     def close_tab(self, tab):
-        """Закрытие вкладки"""
         if not self.current_project:
             return
         
@@ -2100,7 +2137,6 @@ class CodeEditorApp:
         self.current_project.save_state()
     
     def select_tab(self, tab):
-        """Выбор вкладки"""
         if not self.current_project:
             return
             
@@ -2152,10 +2188,11 @@ class CodeEditorApp:
             if self.minimap:
                 self.minimap.update_minimap()
         
+        # Обновляем Discord при смене вкладки
+        self.update_discord()
         self.current_project.save_state()
     
     def on_key_release(self, event):
-        """Обработка отпускания клавиш"""
         if not self.current_project or not self.current_project.current_tab or not self.editor:
             return
         
@@ -2187,19 +2224,16 @@ class CodeEditorApp:
             self._minimap_after_id = self.root.after(500, self.update_minimap_delayed)
     
     def delayed_highlight(self):
-        """Отложенная подсветка"""
         if self.highlighter and self.current_project and self.current_project.current_tab:
             self.highlighter.highlight()
         self._highlight_after_id = None
     
     def delayed_full_highlight(self):
-        """Полная подсветка всего текста"""
         if self.highlighter and self.current_project and self.current_project.current_tab:
             self.highlighter.highlight()
         self._highlight_after_id = None
     
     def on_text_modified(self, event):
-        """Обработка изменения текста"""
         if not self.current_project or not self.current_project.current_tab or not self.editor:
             return
         
@@ -2208,12 +2242,10 @@ class CodeEditorApp:
             self.editor.edit_modified(False)
     
     def auto_save(self):
-        """Автосохранение"""
         if self.current_project and self.current_project.current_tab and self.current_project.current_tab.modified:
             self.save_file()
     
     def update_cursor_position(self, event=None):
-        """Обновление позиции курсора"""
         if not self.editor:
             return
         try:
@@ -2224,37 +2256,31 @@ class CodeEditorApp:
             pass
     
     def cut(self, event=None):
-        """Вырезать"""
         if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Cut>>")
         return "break"
     
     def copy(self, event=None):
-        """Копировать"""
         if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Copy>>")
         return "break"
     
     def paste(self, event=None):
-        """Вставить"""
         if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Paste>>")
         return "break"
     
     def select_all(self, event=None):
-        """Выделить всё"""
         if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.tag_add("sel", "1.0", tk.END)
         return "break"
     
     def open_find(self, event=None):
-        """Открыть поиск"""
         if self.editor and self.current_project and self.current_project.current_tab:
             FindDialog(self.root, self.editor)
         return "break"
     
     def go_to_line(self, event=None):
-        """Перейти к строке"""
         if not self.editor or not self.current_project or not self.current_project.current_tab:
             return "break"
         try:
@@ -2274,9 +2300,7 @@ class CodeEditorApp:
         return "break"
     
     def open_file(self):
-        """Открыть файл"""
         if not self.current_project:
-            # Если нет проекта, создаем временный
             temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
             os.makedirs(temp_path, exist_ok=True)
             self.load_project(temp_path)
@@ -2308,7 +2332,6 @@ class CodeEditorApp:
                 messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
     
     def save_file(self):
-        """Сохранить файл"""
         if not self.current_project or not self.current_project.current_tab:
             return
         
@@ -2334,7 +2357,6 @@ class CodeEditorApp:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
     
     def save_file_as(self):
-        """Сохранить как"""
         if not self.current_project or not self.current_project.current_tab:
             return
         
@@ -2350,7 +2372,6 @@ class CodeEditorApp:
             self.save_file()
     
     def load_project_tree(self):
-        """Загрузка дерева проекта"""
         for item in self.file_tree.get_children():
             self.file_tree.delete(item)
         
@@ -2365,7 +2386,6 @@ class CodeEditorApp:
         self.process_directory(project_root, root_node)
     
     def process_directory(self, path, parent):
-        """Обработка директории"""
         try:
             items = sorted(os.listdir(path))
             for item in items:
@@ -2394,7 +2414,6 @@ class CodeEditorApp:
             pass
     
     def on_file_double_click(self, event):
-        """Двойной клик по файлу"""
         if not self.current_project:
             temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
             os.makedirs(temp_path, exist_ok=True)
@@ -2422,7 +2441,6 @@ class CodeEditorApp:
                     messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
     
     def run_code(self):
-        """Запуск кода"""
         if not self.current_project or not self.current_project.current_tab:
             messagebox.showinfo("Информация", "Сначала откройте или создайте файл")
             return
@@ -2434,6 +2452,10 @@ class CodeEditorApp:
         
         if filename and os.path.exists(filename):
             self.save_file()
+            
+            # Устанавливаем состояние "running" для Discord
+            self.set_discord_state("running")
+            
             self.log(f"\n{'='*50}")
             self.log(f"▶ Запуск: {Path(filename).name}")
             self.log(f"📅 {datetime.now().strftime('%H:%M:%S')}")
@@ -2456,13 +2478,15 @@ class CodeEditorApp:
             if result.stderr:
                 self.log("❌ ОШИБКА:")
                 self.log(result.stderr)
-            self.log("="*50)
+            self.log("=" * 50)
             self.log("✅ Завершено")
         except Exception as e:
             self.log(f"❌ Ошибка: {e}")
+        finally:
+            # Возвращаем состояние редактирования
+            self.set_discord_state("editing")
     
     def log(self, text):
-        """Логирование в консоль"""
         self.console.config(state=tk.NORMAL)
         self.console.insert(tk.END, text + "\n")
         self.console.see(tk.END)
@@ -2470,39 +2494,32 @@ class CodeEditorApp:
         self.console.yview_moveto(1.0)
     
     def write(self, text):
-        """Перехват stdout"""
         self.log(text.rstrip())
         return len(text)
     
     def flush(self):
-        """Flush stdout"""
         pass
     
     def clear_console(self):
-        """Очистка консоли"""
         self.console.config(state=tk.NORMAL)
         self.console.delete("1.0", tk.END)
         self.console.config(state=tk.DISABLED)
         self.log("✅ Консоль очищена")
     
     def zoom_in(self):
-        """Увеличение шрифта"""
         self.config["font_size"] = min(24, self.config["font_size"] + 1)
         if self.editor:
             self.editor.config(font=(self.config["font_family"], self.config["font_size"]))
     
     def zoom_out(self):
-        """Уменьшение шрифта"""
         self.config["font_size"] = max(8, self.config["font_size"] - 1)
         if self.editor:
             self.editor.config(font=(self.config["font_family"], self.config["font_size"]))
     
     def open_settings(self):
-        """Открытие настроек"""
         SettingsDialog(self.root, self.config, self.apply_settings)
     
     def apply_settings(self, new_config):
-        """Применение настроек"""
         old_pos = self.config.get("explorer_position")
         old_console_pos = self.config.get("console_position")
         
@@ -2535,110 +2552,84 @@ class CodeEditorApp:
         self.status_label.config(text="Настройки применены")
     
     def show_about(self):
-        """О программе"""
         about_text = f"""{APP_NAME} v{VERSION}
 
 Всем привет! Это я - K1sh-M1sh! Да, я решил сделать свою программу для написания кода с полным функционалом, который мне нужен!
 Вообще, я разрабатывал для личного использования, но позже решил выложить исходники на Github, вот ты и читаешь данную писанину...
 Разработан на Python с использованием Tkinter.
 Пытался спарадировать VS Code, да что-то и получилось.
-Хотя-бы я сам себе доказал, что я могу сделать сам без мам и пап и кредитов свою программу для редактирование кода.
 
 Возможности:
 • Подсветка синтаксиса Python
 • Мультипроектная архитектура
-• Индивидуальные настройки для каждого проекта
-• Сохранение закрепленных вкладок для каждого проекта
-• Автоматическое восстановление последних файлов
-• Закрепление вкладок (pin/unpin)
-• Сохранение состояния в .RLCode
+• Сохранение закрепленных вкладок
+• Discord Rich Presence
 • Номера строк
 • Миникарта для навигации
 • Поиск (Ctrl+F)
 • Переход к строке (Ctrl+G)
-• Сохранение позиции прокрутки
 • Встроенная консоль
 • Экран приветствия
 • Настраиваемые панели
-• Перемещение окон
-• Сохранение позиции окна
-• Настраиваемый интерфейс
-• Автосохранение
 • Горячие клавиши
-• Оптимизированная производительность
-• Поддержка: Python, JS, HTML, CSS, JSON, TXT
 
 © 2026 RealCode
         """
         messagebox.showinfo("О программе", about_text)
     
     def bind_shortcuts(self):
-      """Привязка горячих клавиш"""
-    # Привязываем все горячие клавиши к корневому окну
-      self.root.bind('<Control-n>', lambda e: self.add_new_tab() or "break")
-      self.root.bind('<Control-N>', lambda e: self.add_new_tab() or "break")
-    
-      self.root.bind('<Control-o>', lambda e: self.open_file() or "break")
-      self.root.bind('<Control-O>', lambda e: self.open_file() or "break")
-    
-      self.root.bind('<Control-k>', lambda e: self.open_folder() or "break")
-      self.root.bind('<Control-K>', lambda e: self.open_folder() or "break")
-    
-      self.root.bind('<Control-s>', lambda e: self.save_file() or "break")
-      self.root.bind('<Control-S>', lambda e: self.save_file() or "break")
-    
-      self.root.bind('<Control-Shift-S>', lambda e: self.save_file_as() or "break")
-    
-      self.root.bind('<Control-w>', lambda e: self.close_current_tab() or "break")
-      self.root.bind('<Control-W>', lambda e: self.close_current_tab() or "break")
-    
-      self.root.bind('<Control-x>', self.cut)
-      self.root.bind('<Control-X>', self.cut)
-    
-      self.root.bind('<Control-c>', self.copy)
-      self.root.bind('<Control-C>', self.copy)
-    
-      self.root.bind('<Control-v>', self.paste)
-      self.root.bind('<Control-V>', self.paste)
-    
-      self.root.bind('<Alt-a>', self.select_all)
-      self.root.bind('<Alt-A>', self.select_all)
-    
-      self.root.bind('<Control-f>', self.open_find)
-      self.root.bind('<Control-F>', self.open_find)
-    
-      self.root.bind('<Control-g>', self.go_to_line)
-      self.root.bind('<Control-G>', self.go_to_line)
-    
-      self.root.bind('<F5>', lambda e: self.run_code() or "break")
-      self.root.bind('<F1>', lambda e: self.open_settings() or "break")
-    
-    # Для zoom используем Control-plus и Control-minus
-      self.root.bind('<Control-plus>', lambda e: self.zoom_in() or "break")
-      self.root.bind('<Control-minus>', lambda e: self.zoom_out() or "break")
-      self.root.bind('<Control-Key-+>', lambda e: self.zoom_in() or "break")
-      self.root.bind('<Control-Key-->', lambda e: self.zoom_out() or "break")
-      self.root.bind('<Control-equal>', lambda e: self.zoom_in() or "break")
-    
-    # БЛОКИРУЕМ ВСЕ ОСТАЛЬНЫЕ CTRL+ КОМБИНАЦИИ
-      self.root.bind('<Control-Key-*>', lambda e: "break")  # Блокируем Ctrl+*
-      self.root.bind('<Control-Key-/>', lambda e: "break")  # Блокируем Ctrl+/
-      self.root.bind('<Control-Key-\\>', lambda e: "break") # Блокируем Ctrl+\
-      self.root.bind('<Control-Key-[>', lambda e: "break")  # Блокируем Ctrl+[
-      self.root.bind('<Control-Key-]>', lambda e: "break")  # Блокируем Ctrl+]
-      self.root.bind('<Control-Key-;>', lambda e: "break")  # Блокируем Ctrl+;
-      self.root.bind('<Control-Key-\'>', lambda e: "break") # Блокируем Ctrl+'
-      self.root.bind('<Control-Key-,>', lambda e: "break")  # Блокируем Ctrl+,
-      self.root.bind('<Control-Key-.>', lambda e: "break")  # Блокируем Ctrl+.
+        self.root.bind('<Control-n>', lambda e: self.add_new_tab() or "break")
+        self.root.bind('<Control-N>', lambda e: self.add_new_tab() or "break")
+        
+        self.root.bind('<Control-o>', lambda e: self.open_file() or "break")
+        self.root.bind('<Control-O>', lambda e: self.open_file() or "break")
+        
+        self.root.bind('<Control-k>', lambda e: self.open_folder() or "break")
+        self.root.bind('<Control-K>', lambda e: self.open_folder() or "break")
+        
+        self.root.bind('<Control-s>', lambda e: self.save_file() or "break")
+        self.root.bind('<Control-S>', lambda e: self.save_file() or "break")
+        
+        self.root.bind('<Control-Shift-S>', lambda e: self.save_file_as() or "break")
+        
+        self.root.bind('<Control-w>', lambda e: self.close_current_tab() or "break")
+        self.root.bind('<Control-W>', lambda e: self.close_current_tab() or "break")
+        
+        self.root.bind('<Control-x>', self.cut)
+        self.root.bind('<Control-X>', self.cut)
+        
+        self.root.bind('<Control-c>', self.copy)
+        self.root.bind('<Control-C>', self.copy)
+        
+        self.root.bind('<Control-v>', self.paste)
+        self.root.bind('<Control-V>', self.paste)
+        
+        self.root.bind('<Alt-a>', self.select_all)
+        self.root.bind('<Alt-A>', self.select_all)
+        
+        self.root.bind('<Control-f>', self.open_find)
+        self.root.bind('<Control-F>', self.open_find)
+        
+        self.root.bind('<Control-g>', self.go_to_line)
+        self.root.bind('<Control-G>', self.go_to_line)
+        
+        self.root.bind('<F5>', lambda e: self.run_code() or "break")
+        self.root.bind('<F1>', lambda e: self.open_settings() or "break")
+        
+        self.root.bind('<Control-plus>', lambda e: self.zoom_in() or "break")
+        self.root.bind('<Control-minus>', lambda e: self.zoom_out() or "break")
+        self.root.bind('<Control-Key-+>', lambda e: self.zoom_in() or "break")
+        self.root.bind('<Control-Key-->', lambda e: self.zoom_out() or "break")
+        self.root.bind('<Control-equal>', lambda e: self.zoom_in() or "break")
+        
+        self.root.bind('<Control-Key-*>', lambda e: "break")
     
     def close_current_tab(self, event=None):
-        """Закрыть текущую вкладку"""
         if self.current_project and self.current_project.current_tab:
             self.close_tab(self.current_project.current_tab)
         return "break"
     
     def on_closing(self):
-        """Обработка закрытия окна"""
         if self.current_project:
             unsaved = []
             for tab in self.current_project.tabs:
@@ -2658,8 +2649,11 @@ class CodeEditorApp:
                             self.select_tab(tab)
                             self.save_file()
             
-            # Сохраняем состояние проекта
             self.save_project_state()
+        
+        # Отключаем Discord
+        if self.discord:
+            self.discord.disconnect()
         
         self.config["sidebar_visible"] = self.explorer_visible
         self.config["console_visible"] = self.console_visible
