@@ -40,7 +40,7 @@ except ImportError:
     print("Discord Rich Presence не доступен. Установите: pip install pypresence")
 
 # Discord Client ID - создайте приложение на https://discord.com/developers/applications
-DISCORD_CLIENT_ID = "*****" <- На свой
+DISCORD_CLIENT_ID = "*****" # <- На свой
 # ===========================================
 
 APP_NAME = "RealCode"
