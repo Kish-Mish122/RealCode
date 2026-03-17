@@ -16,7 +16,7 @@
 *Check without building - ``python main.py``*
 
 ``python``
-```# main.py - RealCode (Полная исправленная версия)
+```# main.py - RealCode
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 import json
@@ -27,9 +27,10 @@ import subprocess
 import threading
 import re
 from datetime import datetime
+import shutil
 
 APP_NAME = "RealCode"
-VERSION = "2.5"
+VERSION = "2.9"
 CONFIG_FILE = "settings.json"
 
 DEFAULT_CONFIG = {
@@ -55,7 +56,8 @@ DEFAULT_CONFIG = {
     "sidebar_visible": True,
     "console_visible": True,
     "explorer_position": "left",
-    "console_position": "bottom"
+    "console_position": "bottom",
+    "recent_projects": []
 }
 
 def load_config():
@@ -75,34 +77,200 @@ def save_config(config):
     except:
         pass
 
+class Project:
+    """Класс для хранения состояния одного проекта"""
+    
+    STATE_FILE = "project_state.json"
+    PINS_FILE = "pinned_items.json"
+    RECENT_FILE = "recent_files.json"
+    
+    def __init__(self, path):
+        self.path = path
+        self.name = os.path.basename(path) or "Проект"
+        self.rlcode_path = os.path.join(path, ".RLCode")
+        self.ensure_rlcode_folder()
+        
+        # Данные проекта
+        self.tabs = []  # Список вкладок
+        self.pinned_tabs = []  # Закрепленные вкладки
+        self.files = {}  # Словарь {tab: file_path}
+        self.file_contents = {}  # Словарь {tab: content}
+        self.current_tab = None
+        
+        # Загружаем состояние
+        self.load_state()
+    
+    def ensure_rlcode_folder(self):
+        """Создание скрытой папки .RLCode если её нет"""
+        if not os.path.exists(self.rlcode_path):
+            try:
+                os.makedirs(self.rlcode_path, exist_ok=True)
+                # На Windows делаем папку скрытой
+                if sys.platform == "win32":
+                    import ctypes
+                    ctypes.windll.kernel32.SetFileAttributesW(self.rlcode_path, 2)
+            except:
+                pass
+    
+    def get_file_path(self, filename):
+        """Получение полного пути к файлу в .RLCode"""
+        return os.path.join(self.rlcode_path, filename)
+    
+    def load_state(self):
+        """Загрузка состояния проекта"""
+        try:
+            # Загружаем состояние
+            state_path = self.get_file_path(self.STATE_FILE)
+            if os.path.exists(state_path):
+                with open(state_path, 'r', encoding='utf-8') as f:
+                    self.state = json.load(f)
+            else:
+                self.state = {
+                    "last_opened_files": [],
+                    "expanded_folders": [],
+                    "last_active_tab": None,
+                    "window_state": {}
+                }
+            
+            # Загружаем закрепленные
+            pins_path = self.get_file_path(self.PINS_FILE)
+            if os.path.exists(pins_path):
+                with open(pins_path, 'r', encoding='utf-8') as f:
+                    self.pins = json.load(f)
+            else:
+                self.pins = {"pinned_files": []}
+            
+            # Загружаем недавние
+            recent_path = self.get_file_path(self.RECENT_FILE)
+            if os.path.exists(recent_path):
+                with open(recent_path, 'r', encoding='utf-8') as f:
+                    self.recent_files = json.load(f)
+            else:
+                self.recent_files = []
+                
+        except Exception as e:
+            print(f"Ошибка загрузки состояния проекта: {e}")
+            self.state = {"last_opened_files": [], "expanded_folders": [], "last_active_tab": None, "window_state": {}}
+            self.pins = {"pinned_files": []}
+            self.recent_files = []
+    
+    def save_state(self):
+        """Сохранение состояния проекта"""
+        try:
+            # Собираем открытые файлы
+            opened_files = []
+            pinned_files = []
+            
+            for tab in self.tabs:
+                file_path = self.files.get(tab)
+                if file_path:
+                    opened_files.append(file_path)
+                    if tab.pinned:
+                        pinned_files.append(file_path)
+            
+            # Последний активный файл
+            last_active = None
+            if self.current_tab:
+                last_active = self.files.get(self.current_tab)
+            
+            self.state["last_opened_files"] = opened_files
+            self.state["last_active_tab"] = last_active
+            
+            # Сохраняем состояние
+            with open(self.get_file_path(self.STATE_FILE), 'w', encoding='utf-8') as f:
+                json.dump(self.state, f, indent=4)
+            
+            # Сохраняем закрепленные
+            self.pins["pinned_files"] = pinned_files
+            with open(self.get_file_path(self.PINS_FILE), 'w', encoding='utf-8') as f:
+                json.dump(self.pins, f, indent=4)
+            
+            # Сохраняем недавние (только последние 20)
+            self.recent_files = self.recent_files[:20]
+            with open(self.get_file_path(self.RECENT_FILE), 'w', encoding='utf-8') as f:
+                json.dump(self.recent_files, f, indent=4)
+                
+        except Exception as e:
+            print(f"Ошибка сохранения состояния проекта: {e}")
+    
+    def add_to_recent(self, file_path):
+        """Добавление файла в недавние"""
+        if file_path in self.recent_files:
+            self.recent_files.remove(file_path)
+        self.recent_files.insert(0, file_path)
+        self.save_state()
+    
+    def set_expanded_folders(self, expanded_folders):
+        """Сохранение раскрытых папок"""
+        self.state["expanded_folders"] = expanded_folders
+        self.save_state()
+    
+    def get_expanded_folders(self):
+        """Получение раскрытых папок"""
+        return self.state.get("expanded_folders", [])
+    
+    def get_last_opened_files(self):
+        """Получение последних открытых файлов"""
+        return self.state.get("last_opened_files", [])
+    
+    def get_last_active_tab(self):
+        """Получение последней активной вкладки"""
+        return self.state.get("last_active_tab")
+    
+    def get_pinned_files(self):
+        """Получение списка закрепленных файлов"""
+        return self.pins.get("pinned_files", [])
+    
+    def is_file_pinned(self, file_path):
+        """Проверка, закреплен ли файл"""
+        return file_path in self.pins.get("pinned_files", [])
+    
+    def clear(self):
+        """Очистка данных проекта"""
+        self.tabs.clear()
+        self.pinned_tabs.clear()
+        self.files.clear()
+        self.file_contents.clear()
+        self.current_tab = None
+
 class VSColorScheme:
-    """Цвета RealCode темы"""
-    BG_DARK = "#1e1e1e"
-    BG_MEDIUM = "#252526"
-    BG_LIGHT = "#2d2d2d"
-    FG = "#d4d4d4"
-    FG_LIGHT = "#cccccc"
-    ACCENT = "#007acc"
-    ACCENT_HOVER = "#1a8cff"
-    SELECTION = "#264f78"
+    """Цвета RealCode темы - Тёмно-зелёная версия"""
+    
+    # Основные фоны
+    BG_DARK = "#1e1e1e"        # Основной фон редактора
+    BG_MEDIUM = "#252526"       # Фон панелей (проводник, вкладки)
+    BG_LIGHT = "#2d2d2d"        # Светлый фон для элементов
+    
+    # Текст
+    FG = "#d4d4d4"              # Основной текст
+    FG_LIGHT = "#cccccc"         # Светлый текст
+    
+    # ЗЕЛЁНЫЕ АКЦЕНТЫ
+    ACCENT = "#2e7d32"           # Основной зелёный (кнопки, вкладки)
+    ACCENT_HOVER = "#1b5e20"      # При наведении - темнее
+    SELECTION = "#1b5e20"         # Выделение текста
+    
+    STATUS_BG = "#2e7d32"         # Цвет верхней панели консоли
+    CONSOLE_BG = "#1e1e1e"        # Фон самой консоли (текстовая область)
+    
+    # Остальные элементы
     LINE_NUMBERS = "#858585"
     BORDER = "#3e3e42"
     SCROLLBAR = "#3e3e42"
     TAB_ACTIVE = "#1e1e1e"
     TAB_INACTIVE = "#2d2d2d"
-    CONSOLE_BG = "#1e1e1e"
-    STATUS_BG = "#007acc"
-    BUTTON_BG = "#0e639c"
+    BUTTON_BG = "#2e7d32"         # Кнопки на панели инструментов
+    PINNED = "#ff6b6b"            # Закрепленные вкладки (красные)
     
-    # Цвета синтаксиса
-    KEYWORD = "#569cd6"
-    STRING = "#ce9178"
-    COMMENT = "#6a9955"
-    NUMBER = "#b5cea8"
-    FUNCTION = "#dcdcaa"
-    CLASS = "#4ec9b0"
-    DECORATOR = "#c586c0"
-    BUILTIN = "#4ec9b0"
+    # Цвета синтаксиса (под зелёную тему)
+    KEYWORD = "#81c784"            # Светло-зелёный
+    STRING = "#ce9178"             # Оранжеватый
+    COMMENT = "#6a9955"            # Тёмно-зелёный
+    NUMBER = "#b5cea8"             # Светло-зелёный
+    FUNCTION = "#dcdcaa"           # Жёлтый
+    CLASS = "#4ec9b0"              # Бирюзовый
+    DECORATOR = "#c586c0"           # Розовый
+    BUILTIN = "#4ec9b0"             # Бирюзовый
 
 class WelcomeScreen:
     """Экран-заставка при отсутствии открытых файлов"""
@@ -265,12 +433,12 @@ class WelcomeScreen:
     
     def hide(self):
         """Скрыть экран-заставку"""
-        if self.frame:
+        if self.frame and self.frame.winfo_ismapped():
             self.frame.pack_forget()
     
     def show(self):
         """Показать экран-заставку"""
-        if self.frame:
+        if self.frame and not self.frame.winfo_ismapped():
             self.frame.pack(fill=tk.BOTH, expand=True)
 
 class LineNumbers(tk.Canvas):
@@ -325,7 +493,7 @@ class LineNumbers(tk.Canvas):
             pass
 
 class Minimap(tk.Canvas):
-    """Миникарта для быстрой навигации по коду - ОПТИМИЗИРОВАННАЯ"""
+    """Миникарта для быстрой навигации по коду"""
     
     def __init__(self, parent, text_widget, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
@@ -584,7 +752,7 @@ class FindDialog:
             self.text_widget.see(tk.INSERT)
 
 class SyntaxHighlighter:
-    """Подсветка синтаксиса Python - ИСПРАВЛЕННАЯ"""
+    """Подсветка синтаксиса Python"""
     
     def __init__(self, text_widget):
         self.text = text_widget
@@ -684,19 +852,35 @@ class SyntaxHighlighter:
             pass
 
 class ModernTab(tk.Frame):
-    """Вкладка в стиле VS Code"""
-    def __init__(self, parent, title, close_callback, select_callback, *args, **kwargs):
-        super().__init__(parent, bg=VSColorScheme.TAB_INACTIVE, height=45, width=150)
+    """Вкладка в стиле VS Code с поддержкой закрепления"""
+    
+    def __init__(self, parent, title, close_callback, select_callback, pin_callback, *args, **kwargs):
+        super().__init__(parent, bg=VSColorScheme.TAB_INACTIVE, height=45, width=180)
         self.pack_propagate(False)
         self.close_callback = close_callback
         self.select_callback = select_callback
+        self.pin_callback = pin_callback
         self.title = title
         self.is_active = False
         self.modified = False
+        self.pinned = False
         self.scroll_position = 0.0
+        self.file_path = None
         
         self.configure(cursor="hand2")
         
+        # Иконка закрепления
+        self.pin_btn = tk.Label(
+            self,
+            text="📌",
+            bg=VSColorScheme.TAB_INACTIVE,
+            fg=VSColorScheme.FG_LIGHT,
+            font=("Segoe UI", 10),
+            cursor="hand2"
+        )
+        self.pin_btn.place(x=5, y=12, width=20, height=20)
+        
+        # Заголовок
         self.title_label = tk.Label(
             self,
             text=title,
@@ -704,11 +888,12 @@ class ModernTab(tk.Frame):
             fg=VSColorScheme.FG,
             font=("Segoe UI", 11),
             cursor="hand2",
-            padx=15,
+            padx=10,
             pady=12
         )
-        self.title_label.place(x=10, y=0, width=100, height=45)
+        self.title_label.place(x=30, y=0, width=120, height=45)
         
+        # Кнопка закрытия
         self.close_btn = tk.Label(
             self,
             text="✕",
@@ -717,12 +902,16 @@ class ModernTab(tk.Frame):
             font=("Segoe UI", 12, "bold"),
             cursor="hand2"
         )
-        self.close_btn.place(x=115, y=10, width=25, height=25)
+        self.close_btn.place(x=155, y=10, width=20, height=25)
         
+        # Привязка событий
         self.bind('<Button-1>', self.on_select)
         self.title_label.bind('<Button-1>', self.on_select)
-        
+        self.pin_btn.bind('<Button-1>', self.on_pin)
         self.close_btn.bind('<Button-1>', self.on_close)
+        
+        self.pin_btn.bind('<Enter>', self.on_pin_enter)
+        self.pin_btn.bind('<Leave>', self.on_pin_leave)
         self.close_btn.bind('<Enter>', self.on_close_enter)
         self.close_btn.bind('<Leave>', self.on_close_leave)
         
@@ -735,13 +924,28 @@ class ModernTab(tk.Frame):
         if not self.is_active:
             self.configure(bg=VSColorScheme.BG_LIGHT)
             self.title_label.configure(bg=VSColorScheme.BG_LIGHT)
+            self.pin_btn.configure(bg=VSColorScheme.BG_LIGHT)
             self.close_btn.configure(bg=VSColorScheme.BG_LIGHT)
     
     def on_leave(self, e):
         if not self.is_active:
-            self.configure(bg=VSColorScheme.TAB_INACTIVE)
-            self.title_label.configure(bg=VSColorScheme.TAB_INACTIVE)
-            self.close_btn.configure(bg=VSColorScheme.TAB_INACTIVE)
+            bg = VSColorScheme.TAB_INACTIVE
+            self.configure(bg=bg)
+            self.title_label.configure(bg=bg)
+            self.pin_btn.configure(bg=bg)
+            self.close_btn.configure(bg=bg)
+    
+    def on_pin_enter(self, e):
+        if self.pinned:
+            self.pin_btn.configure(fg=VSColorScheme.PINNED)
+        else:
+            self.pin_btn.configure(fg=VSColorScheme.ACCENT)
+    
+    def on_pin_leave(self, e):
+        if self.pinned:
+            self.pin_btn.configure(fg=VSColorScheme.PINNED)
+        else:
+            self.pin_btn.configure(fg=VSColorScheme.FG_LIGHT)
     
     def on_close_enter(self, e):
         self.close_btn.configure(fg=VSColorScheme.ACCENT, bg=VSColorScheme.ACCENT_HOVER)
@@ -753,8 +957,19 @@ class ModernTab(tk.Frame):
     def on_select(self, e):
         self.select_callback(self)
     
+    def on_pin(self, e):
+        """Обработка закрепления/открепления"""
+        self.pinned = not self.pinned
+        if self.pinned:
+            self.pin_btn.configure(fg=VSColorScheme.PINNED, text="📍")
+        else:
+            self.pin_btn.configure(fg=VSColorScheme.FG_LIGHT, text="📌")
+        
+        if self.pin_callback:
+            self.pin_callback(self)
+    
     def on_close(self, e):
-        if self.close_callback:
+        if not self.pinned and self.close_callback:
             self.close_callback(self)
     
     def set_active(self, active):
@@ -762,6 +977,7 @@ class ModernTab(tk.Frame):
         bg = VSColorScheme.TAB_ACTIVE if active else VSColorScheme.TAB_INACTIVE
         self.configure(bg=bg)
         self.title_label.configure(bg=bg)
+        self.pin_btn.configure(bg=bg)
         self.close_btn.configure(bg=bg)
     
     def set_modified(self, modified):
@@ -997,10 +1213,10 @@ class CodeEditorApp:
         except:
             pass
         
-        self.tabs = []
-        self.current_tab = None
-        self.files = {}
-        self.file_contents = {}
+        # Данные приложения
+        self.current_project = None  # Текущий проект
+        self.projects = {}  # Словарь {path: Project}
+        
         self.highlighter = None
         self._highlight_after_id = None
         self._minimap_after_id = None
@@ -1022,19 +1238,119 @@ class CodeEditorApp:
         self.create_widgets()
         self.bind_shortcuts()
         
-        self.add_new_tab()
-        
+        # Пытаемся загрузить последний проект
         last_folder = self.config.get("last_opened_folder", ".")
         if os.path.exists(last_folder):
-            self.config["project_path"] = last_folder
-            self.load_project_tree()
+            self.load_project(last_folder)
         else:
             self.load_project_tree()
+            # Если нет проекта, показываем Welcome screen
+            self.show_welcome_screen()
         
         self.original_stdout = sys.stdout
         self.original_stderr = sys.stderr
         sys.stdout = self
         sys.stderr = self
+    
+    def load_project(self, path):
+        """Загрузка проекта"""
+        # Сохраняем текущий проект если есть
+        if self.current_project:
+            self.save_project_state()
+            # Очищаем вкладки текущего проекта из UI
+            for tab in self.current_project.tabs[:]:
+                self.remove_tab_from_ui(tab)
+        
+        # Получаем или создаем проект
+        if path not in self.projects:
+            self.projects[path] = Project(path)
+        
+        self.current_project = self.projects[path]
+        self.config["project_path"] = path
+        self.config["last_opened_folder"] = path
+        
+        # Добавляем в недавние проекты
+        recent = self.config.get("recent_projects", [])
+        if path in recent:
+            recent.remove(path)
+        recent.insert(0, path)
+        self.config["recent_projects"] = recent[:10]
+        save_config(self.config)
+        
+        # Обновляем UI
+        self.folder_label.config(text=os.path.basename(path))
+        self.load_project_tree()
+        
+        # Восстанавливаем состояние проекта
+        self.restore_project_state()
+    
+    def save_project_state(self):
+        """Сохранение состояния текущего проекта"""
+        if not self.current_project:
+            return
+        
+        # Сохраняем данные из UI в проект
+        if self.editor and self.current_project.current_tab:
+            self.current_project.file_contents[self.current_project.current_tab] = self.editor.get("1.0", tk.END)
+        
+        # Сохраняем состояние
+        self.current_project.save_state()
+    
+    def restore_project_state(self):
+        """Восстановление состояния текущего проекта"""
+        if not self.current_project:
+            self.show_welcome_screen()
+            return
+        
+        # Получаем последние открытые файлы
+        last_files = self.current_project.get_last_opened_files()
+        pinned_files = self.current_project.get_pinned_files()
+        
+        if last_files:
+            # Восстанавливаем файлы
+            for file_path in last_files:
+                if os.path.exists(file_path):
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        
+                        # Определяем, закреплен ли файл
+                        is_pinned = file_path in pinned_files
+                        self.add_new_tab(filename=file_path, content=content, restore=True, pinned=is_pinned)
+                    except Exception as e:
+                        print(f"Ошибка загрузки файла {file_path}: {e}")
+            
+            # Переупорядочиваем вкладки (закрепленные слева)
+            self.reorder_tabs()
+            
+            # Восстанавливаем последнюю активную вкладку
+            last_tab_file = self.current_project.get_last_active_tab()
+            if last_tab_file:
+                for tab in self.current_project.tabs:
+                    if self.current_project.files.get(tab) == last_tab_file:
+                        self.select_tab(tab)
+                        break
+            elif self.current_project.tabs:
+                # Если нет последней активной, выбираем первую
+                self.select_tab(self.current_project.tabs[0])
+            
+            # Скрываем welcome screen так как есть вкладки
+            self.hide_welcome_screen()
+        else:
+            # Если нет файлов, показываем welcome screen
+            self.show_welcome_screen()
+    
+    def remove_tab_from_ui(self, tab):
+        """Удаление вкладки из UI"""
+        if tab in self.current_project.pinned_tabs:
+            self.current_project.pinned_tabs.remove(tab)
+        if tab in self.current_project.tabs:
+            self.current_project.tabs.remove(tab)
+        if tab in self.current_project.files:
+            del self.current_project.files[tab]
+        if tab in self.current_project.file_contents:
+            del self.current_project.file_contents[tab]
+        tab.destroy()
     
     def setup_window(self):
         """Настройка окна с сохранением позиции и размера"""
@@ -1263,6 +1579,7 @@ class CodeEditorApp:
         
         self.file_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.file_tree.bind("<Double-1>", self.on_file_double_click)
+        self.file_tree.bind("<<TreeviewOpen>>", self.on_tree_open)
         
         # Центральная область
         self.center_paned = tk.PanedWindow(
@@ -1347,11 +1664,6 @@ class CodeEditorApp:
         self.editor.bind('<<Modified>>', self.on_text_modified)
         self.editor.bind('<MouseWheel>', self.on_editor_wheel)
         self.editor.bind('<Button-3>', self.show_editor_context_menu)
-        self.editor.bind('<Control-x>', lambda e: self.cut())
-        self.editor.bind('<Control-c>', lambda e: self.copy())
-        self.editor.bind('<Control-v>', lambda e: self.paste())
-        self.editor.bind('<Alt-a>', self.select_all)
-        self.editor.bind('<Alt-A>', self.select_all)
         
         self.editor_scrollbar.bind('<B1-Motion>', self.on_scroll)
         
@@ -1444,9 +1756,6 @@ class CodeEditorApp:
         if console_pos == "top":
             self.center_paned.paneconfig(self.editor_area, after=self.console_area)
         
-        if len(self.tabs) == 0:
-            self.show_welcome_screen()
-        
         # Строка состояния
         status = tk.Frame(self.root, bg=VSColorScheme.STATUS_BG, height=25)
         status.pack(side=tk.BOTTOM, fill=tk.X)
@@ -1474,19 +1783,23 @@ class CodeEditorApp:
     
     def show_welcome_screen(self):
         """Показать экран приветствия"""
-        if self.welcome_screen:
+        if self.welcome_screen and self.editor_container:
+            # Скрываем редактор и показываем welcome screen
             self.editor_container.pack_forget()
             self.welcome_screen.show()
+            # Очищаем редактор
+            if self.editor:
+                self.editor.delete("1.0", tk.END)
     
     def hide_welcome_screen(self):
         """Скрыть экран приветствия"""
-        if self.welcome_screen:
+        if self.welcome_screen and self.editor_container:
             self.welcome_screen.hide()
             self.editor_container.pack(fill=tk.BOTH, expand=True)
     
     def show_editor_context_menu(self, event):
         """Показать контекстное меню редактора"""
-        if not self.current_tab:
+        if not self.current_project or not self.current_project.current_tab:
             return
             
         menu = tk.Menu(self.root, tearoff=0)
@@ -1628,6 +1941,21 @@ class CodeEditorApp:
                 self.center_paned.add(self.console_area, height=current_height)
                 self.center_paned.add(self.editor_area)
     
+    def on_tree_open(self, event):
+        """Обработка открытия папки в дереве"""
+        if not self.current_project:
+            return
+        
+        # Сохраняем раскрытые папки
+        expanded = []
+        for item in self.file_tree.get_children():
+            if self.file_tree.item(item, "open"):
+                values = self.file_tree.item(item, "values")
+                if values:
+                    expanded.append(values[0])
+        
+        self.current_project.set_expanded_folders(expanded)
+    
     def open_folder(self):
         """Открытие папки"""
         folder = filedialog.askdirectory(
@@ -1636,31 +1964,46 @@ class CodeEditorApp:
         )
         
         if folder:
-            self.config["project_path"] = folder
-            self.config["last_opened_folder"] = folder
-            save_config(self.config)
-            
-            self.folder_label.config(text=os.path.basename(folder))
-            self.load_project_tree()
+            # Загружаем новый проект
+            self.load_project(folder)
             self.status_label.config(text=f"Открыта папка: {folder}")
     
-    def add_new_tab(self, filename=None, content=""):
+    def add_new_tab(self, filename=None, content="", restore=False, pinned=False):
         """Добавление новой вкладки"""
-        tab_title = Path(filename).name if filename else f"Безымянный {len(self.tabs) + 1}"
+        if not self.current_project:
+            # Если нет проекта, создаем временный
+            temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
+            os.makedirs(temp_path, exist_ok=True)
+            self.load_project(temp_path)
+        
+        tab_title = Path(filename).name if filename else f"Безымянный {len(self.current_project.tabs) + 1}"
         tab = ModernTab(
             self.tabs_container,
             tab_title,
             self.close_tab,
-            self.select_tab
+            self.select_tab,
+            self.toggle_pin
         )
+        
+        # Устанавливаем состояние закрепления
+        if pinned:
+            tab.pinned = True
+            tab.pin_btn.configure(fg=VSColorScheme.PINNED, text="📍")
+            self.current_project.pinned_tabs.append(tab)
+        
         tab.pack(side=tk.LEFT, padx=2, pady=3)
         
-        self.tabs.append(tab)
-        self.files[tab] = filename
-        self.file_contents[tab] = content
+        self.current_project.tabs.append(tab)
+        self.current_project.files[tab] = filename
+        self.current_project.file_contents[tab] = content
         
-        if len(self.tabs) == 1:
+        # Если это первая вкладка, скрываем welcome screen
+        if len(self.current_project.tabs) == 1:
             self.hide_welcome_screen()
+        
+        # Если это не восстановление, добавляем в недавние
+        if filename and not restore:
+            self.current_project.add_to_recent(filename)
         
         self.select_tab(tab)
         
@@ -1669,8 +2012,53 @@ class CodeEditorApp:
         
         return tab
     
+    def toggle_pin(self, tab):
+        """Закрепление/открепление вкладки"""
+        if not self.current_project:
+            return
+        
+        if tab.pinned:
+            if tab not in self.current_project.pinned_tabs:
+                self.current_project.pinned_tabs.append(tab)
+        else:
+            if tab in self.current_project.pinned_tabs:
+                self.current_project.pinned_tabs.remove(tab)
+        
+        self.reorder_tabs()
+        self.current_project.save_state()
+    
+    def reorder_tabs(self):
+        """Переупорядочивание вкладок: закрепленные слева"""
+        if not self.current_project:
+            return
+        
+        pinned = [t for t in self.current_project.tabs if t.pinned]
+        unpinned = [t for t in self.current_project.tabs if not t.pinned]
+        
+        new_order = pinned + unpinned
+        
+        if new_order != self.current_project.tabs:
+            for tab in self.current_project.tabs:
+                tab.pack_forget()
+            
+            for tab in new_order:
+                tab.pack(side=tk.LEFT, padx=2, pady=3)
+            
+            self.current_project.tabs = new_order
+    
     def close_tab(self, tab):
         """Закрытие вкладки"""
+        if not self.current_project:
+            return
+        
+        if tab not in self.current_project.tabs:
+            return
+        
+        if tab.pinned:
+            messagebox.showinfo("Закрепленная вкладка", 
+                               "Эта вкладка закреплена. Открепите её, чтобы закрыть.")
+            return
+            
         if tab.modified:
             response = messagebox.askyesnocancel(
                 "Сохранение",
@@ -1682,50 +2070,69 @@ class CodeEditorApp:
                 self.select_tab(tab)
                 self.save_file()
         
-        if tab in self.file_contents:
-            del self.file_contents[tab]
+        try:
+            idx = self.current_project.tabs.index(tab)
+        except ValueError:
+            idx = 0
         
-        idx = self.tabs.index(tab)
+        if tab in self.current_project.file_contents:
+            del self.current_project.file_contents[tab]
+        if tab in self.current_project.files:
+            del self.current_project.files[tab]
+        if tab in self.current_project.pinned_tabs:
+            self.current_project.pinned_tabs.remove(tab)
+        
         tab.destroy()
-        self.tabs.remove(tab)
-        del self.files[tab]
         
-        if self.tabs:
-            if idx >= len(self.tabs):
-                idx = len(self.tabs) - 1
-            self.select_tab(self.tabs[idx])
+        if tab in self.current_project.tabs:
+            self.current_project.tabs.remove(tab)
+        
+        if self.current_project.tabs:
+            if idx >= len(self.current_project.tabs):
+                idx = len(self.current_project.tabs) - 1
+            self.select_tab(self.current_project.tabs[idx])
         else:
-            self.current_tab = None
+            self.current_project.current_tab = None
             self.show_welcome_screen()
+            if self.editor:
+                self.editor.delete("1.0", tk.END)
+        
+        self.current_project.save_state()
     
     def select_tab(self, tab):
         """Выбор вкладки"""
-        if self.current_tab and self.current_tab in self.file_contents and self.editor:
-            self.file_contents[self.current_tab] = self.editor.get("1.0", tk.END)
+        if not self.current_project:
+            return
+            
+        if tab not in self.current_project.tabs:
+            return
+        
+        if self.current_project.current_tab and self.current_project.current_tab in self.current_project.file_contents and self.editor:
+            self.current_project.file_contents[self.current_project.current_tab] = self.editor.get("1.0", tk.END)
             if self.config.get("save_scroll_position", True):
                 scroll_pos = self.editor.yview()[0]
-                self.current_tab.save_scroll_position(scroll_pos)
+                self.current_project.current_tab.save_scroll_position(scroll_pos)
         
-        for t in self.tabs:
+        for t in self.current_project.tabs:
             t.set_active(t == tab)
         
-        self.current_tab = tab
+        self.current_project.current_tab = tab
         
-        if tab in self.file_contents:
-            content = self.file_contents[tab]
+        if tab in self.current_project.file_contents:
+            content = self.current_project.file_contents[tab]
         else:
-            filename = self.files.get(tab)
+            filename = self.current_project.files.get(tab)
             if filename and os.path.exists(filename):
                 try:
                     with open(filename, 'r', encoding='utf-8') as f:
                         content = f.read()
-                    self.file_contents[tab] = content
+                    self.current_project.file_contents[tab] = content
                 except Exception as e:
                     content = ""
                     self.log(f"Ошибка загрузки: {e}")
             else:
                 content = ""
-                self.file_contents[tab] = ""
+                self.current_project.file_contents[tab] = ""
         
         if self.editor:
             self.editor.delete("1.0", tk.END)
@@ -1744,10 +2151,12 @@ class CodeEditorApp:
             self.line_numbers.update_numbers()
             if self.minimap:
                 self.minimap.update_minimap()
+        
+        self.current_project.save_state()
     
     def on_key_release(self, event):
         """Обработка отпускания клавиш"""
-        if not self.current_tab or not self.editor:
+        if not self.current_project or not self.current_project.current_tab or not self.editor:
             return
         
         self.update_cursor_position()
@@ -1767,7 +2176,7 @@ class CodeEditorApp:
             self.root.after_cancel(self._highlight_after_id)
         self._highlight_after_id = self.root.after(1000, self.delayed_full_highlight)
         
-        if self.config.get("auto_save", False) and self.current_tab:
+        if self.config.get("auto_save", False) and self.current_project.current_tab:
             if self.auto_save_timer:
                 self.root.after_cancel(self.auto_save_timer)
             self.auto_save_timer = self.root.after(2000, self.auto_save)
@@ -1779,28 +2188,28 @@ class CodeEditorApp:
     
     def delayed_highlight(self):
         """Отложенная подсветка"""
-        if self.highlighter and self.current_tab:
+        if self.highlighter and self.current_project and self.current_project.current_tab:
             self.highlighter.highlight()
         self._highlight_after_id = None
     
     def delayed_full_highlight(self):
         """Полная подсветка всего текста"""
-        if self.highlighter and self.current_tab:
+        if self.highlighter and self.current_project and self.current_project.current_tab:
             self.highlighter.highlight()
         self._highlight_after_id = None
     
     def on_text_modified(self, event):
         """Обработка изменения текста"""
-        if not self.current_tab or not self.editor:
+        if not self.current_project or not self.current_project.current_tab or not self.editor:
             return
         
-        if self.editor.edit_modified() and self.current_tab:
-            self.current_tab.set_modified(True)
+        if self.editor.edit_modified() and self.current_project.current_tab:
+            self.current_project.current_tab.set_modified(True)
             self.editor.edit_modified(False)
     
     def auto_save(self):
         """Автосохранение"""
-        if self.current_tab and self.current_tab.modified:
+        if self.current_project and self.current_project.current_tab and self.current_project.current_tab.modified:
             self.save_file()
     
     def update_cursor_position(self, event=None):
@@ -1816,34 +2225,38 @@ class CodeEditorApp:
     
     def cut(self, event=None):
         """Вырезать"""
-        if self.editor and self.current_tab:
+        if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Cut>>")
+        return "break"
     
     def copy(self, event=None):
         """Копировать"""
-        if self.editor and self.current_tab:
+        if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Copy>>")
+        return "break"
     
     def paste(self, event=None):
         """Вставить"""
-        if self.editor and self.current_tab:
+        if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Paste>>")
+        return "break"
     
     def select_all(self, event=None):
         """Выделить всё"""
-        if self.editor and self.current_tab:
+        if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.tag_add("sel", "1.0", tk.END)
         return "break"
     
     def open_find(self, event=None):
         """Открыть поиск"""
-        if self.editor and self.current_tab:
+        if self.editor and self.current_project and self.current_project.current_tab:
             FindDialog(self.root, self.editor)
+        return "break"
     
     def go_to_line(self, event=None):
         """Перейти к строке"""
-        if not self.editor or not self.current_tab:
-            return
+        if not self.editor or not self.current_project or not self.current_project.current_tab:
+            return "break"
         try:
             total_lines = int(self.editor.index('end-1c').split('.')[0])
             line = simpledialog.askinteger(
@@ -1858,9 +2271,16 @@ class CodeEditorApp:
                 self.update_cursor_position()
         except:
             pass
+        return "break"
     
     def open_file(self):
         """Открыть файл"""
+        if not self.current_project:
+            # Если нет проекта, создаем временный
+            temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
+            os.makedirs(temp_path, exist_ok=True)
+            self.load_project(temp_path)
+        
         file_path = filedialog.askopenfilename(
             initialdir=self.config.get("project_path", "."),
             filetypes=[
@@ -1878,7 +2298,7 @@ class CodeEditorApp:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                 
-                for tab, fname in self.files.items():
+                for tab, fname in self.current_project.files.items():
                     if fname == file_path:
                         self.select_tab(tab)
                         return
@@ -1889,10 +2309,10 @@ class CodeEditorApp:
     
     def save_file(self):
         """Сохранить файл"""
-        if not self.current_tab:
+        if not self.current_project or not self.current_project.current_tab:
             return
         
-        filename = self.files.get(self.current_tab)
+        filename = self.current_project.files.get(self.current_project.current_tab)
         
         if not filename:
             self.save_file_as()
@@ -1903,16 +2323,19 @@ class CodeEditorApp:
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(content)
             
-            self.file_contents[self.current_tab] = content
-            self.current_tab.set_modified(False)
+            self.current_project.file_contents[self.current_project.current_tab] = content
+            self.current_project.current_tab.set_modified(False)
             self.status_label.config(text=f"Сохранено: {filename}")
             self.log(f"✅ Сохранено: {Path(filename).name}")
+            
+            if self.current_project:
+                self.current_project.add_to_recent(filename)
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
     
     def save_file_as(self):
         """Сохранить как"""
-        if not self.current_tab:
+        if not self.current_project or not self.current_project.current_tab:
             return
         
         file_path = filedialog.asksaveasfilename(
@@ -1922,8 +2345,8 @@ class CodeEditorApp:
         )
         
         if file_path:
-            self.files[self.current_tab] = file_path
-            self.current_tab.title_label.config(text=Path(file_path).name)
+            self.current_project.files[self.current_project.current_tab] = file_path
+            self.current_project.current_tab.title_label.config(text=Path(file_path).name)
             self.save_file()
     
     def load_project_tree(self):
@@ -1972,6 +2395,11 @@ class CodeEditorApp:
     
     def on_file_double_click(self, event):
         """Двойной клик по файлу"""
+        if not self.current_project:
+            temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
+            os.makedirs(temp_path, exist_ok=True)
+            self.load_project(temp_path)
+        
         selection = self.file_tree.selection()
         if not selection:
             return
@@ -1984,7 +2412,7 @@ class CodeEditorApp:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                     
-                    for tab, fname in self.files.items():
+                    for tab, fname in self.current_project.files.items():
                         if fname == file_path:
                             self.select_tab(tab)
                             return
@@ -1995,14 +2423,14 @@ class CodeEditorApp:
     
     def run_code(self):
         """Запуск кода"""
-        if not self.current_tab:
+        if not self.current_project or not self.current_project.current_tab:
             messagebox.showinfo("Информация", "Сначала откройте или создайте файл")
             return
         
-        filename = self.files.get(self.current_tab)
+        filename = self.current_project.files.get(self.current_project.current_tab)
         if not filename:
             self.save_file_as()
-            filename = self.files.get(self.current_tab)
+            filename = self.current_project.files.get(self.current_project.current_tab)
         
         if filename and os.path.exists(filename):
             self.save_file()
@@ -2118,8 +2546,12 @@ class CodeEditorApp:
 
 Возможности:
 • Подсветка синтаксиса Python
-• Открытие папок и файлов
-• Множественные вкладки
+• Мультипроектная архитектура
+• Индивидуальные настройки для каждого проекта
+• Сохранение закрепленных вкладок для каждого проекта
+• Автоматическое восстановление последних файлов
+• Закрепление вкладок (pin/unpin)
+• Сохранение состояния в .RLCode
 • Номера строк
 • Миникарта для навигации
 • Поиск (Ctrl+F)
@@ -2134,56 +2566,100 @@ class CodeEditorApp:
 • Автосохранение
 • Горячие клавиши
 • Оптимизированная производительность
-• Поддержка: C++, Python, txt-форматы, JS, HTML, CSS, json
+• Поддержка: Python, JS, HTML, CSS, JSON, TXT
 
-© 2024 RealCode
+© 2026 RealCode
         """
         messagebox.showinfo("О программе", about_text)
     
     def bind_shortcuts(self):
-        """Привязка горячих клавиш"""
-        self.root.bind('<Control-n>', lambda e: self.add_new_tab()) # Создать новую вкладку
-        self.root.bind('<Control-o>', lambda e: self.open_file()) # Открыть файл
-        self.root.bind('<Control-k>', lambda e: self.open_folder()) # Открыть папку
-        self.root.bind('<Control-s>', lambda e: self.save_file()) # Сохранить файл
-        self.root.bind('<Control-Shift-S>', lambda e: self.save_file_as()) # Сохранить файл как...
-        self.root.bind('<Control-w>', lambda e: self.close_current_tab()) # Закрыть данную вкладку
-        self.root.bind('<Control-x>', lambda e: self.cut()) # Вырезать
-        self.root.bind('<Control-c>', lambda e: self.copy()) # Копировать
-        self.root.bind('<Control-v>', lambda e: self.paste()) # Вставить
-        self.root.bind('<Alt-a>', self.select_all) # Выбрать всё
-        self.root.bind('<Alt-A>', self.select_all) # Выбрать всё
-        self.root.bind('<Control-f>', self.open_find) # Найти
-        self.root.bind('<Control-g>', self.go_to_line) # Перейти к строке
-        self.root.bind('<F5>', lambda e: self.run_code()) # Стартовать код
-        self.root.bind('<F1>', lambda e: self.open_settings()) # Настройки
-        self.root.bind('<Control-plus>', lambda e: self.zoom_in()) # Приблизить
-        self.root.bind('<Control-minus>', lambda e: self.zoom_out()) # Отдалить
+      """Привязка горячих клавиш"""
+    # Привязываем все горячие клавиши к корневому окну
+      self.root.bind('<Control-n>', lambda e: self.add_new_tab() or "break")
+      self.root.bind('<Control-N>', lambda e: self.add_new_tab() or "break")
+    
+      self.root.bind('<Control-o>', lambda e: self.open_file() or "break")
+      self.root.bind('<Control-O>', lambda e: self.open_file() or "break")
+    
+      self.root.bind('<Control-k>', lambda e: self.open_folder() or "break")
+      self.root.bind('<Control-K>', lambda e: self.open_folder() or "break")
+    
+      self.root.bind('<Control-s>', lambda e: self.save_file() or "break")
+      self.root.bind('<Control-S>', lambda e: self.save_file() or "break")
+    
+      self.root.bind('<Control-Shift-S>', lambda e: self.save_file_as() or "break")
+    
+      self.root.bind('<Control-w>', lambda e: self.close_current_tab() or "break")
+      self.root.bind('<Control-W>', lambda e: self.close_current_tab() or "break")
+    
+      self.root.bind('<Control-x>', self.cut)
+      self.root.bind('<Control-X>', self.cut)
+    
+      self.root.bind('<Control-c>', self.copy)
+      self.root.bind('<Control-C>', self.copy)
+    
+      self.root.bind('<Control-v>', self.paste)
+      self.root.bind('<Control-V>', self.paste)
+    
+      self.root.bind('<Alt-a>', self.select_all)
+      self.root.bind('<Alt-A>', self.select_all)
+    
+      self.root.bind('<Control-f>', self.open_find)
+      self.root.bind('<Control-F>', self.open_find)
+    
+      self.root.bind('<Control-g>', self.go_to_line)
+      self.root.bind('<Control-G>', self.go_to_line)
+    
+      self.root.bind('<F5>', lambda e: self.run_code() or "break")
+      self.root.bind('<F1>', lambda e: self.open_settings() or "break")
+    
+    # Для zoom используем Control-plus и Control-minus
+      self.root.bind('<Control-plus>', lambda e: self.zoom_in() or "break")
+      self.root.bind('<Control-minus>', lambda e: self.zoom_out() or "break")
+      self.root.bind('<Control-Key-+>', lambda e: self.zoom_in() or "break")
+      self.root.bind('<Control-Key-->', lambda e: self.zoom_out() or "break")
+      self.root.bind('<Control-equal>', lambda e: self.zoom_in() or "break")
+    
+    # БЛОКИРУЕМ ВСЕ ОСТАЛЬНЫЕ CTRL+ КОМБИНАЦИИ
+      self.root.bind('<Control-Key-*>', lambda e: "break")  # Блокируем Ctrl+*
+      self.root.bind('<Control-Key-/>', lambda e: "break")  # Блокируем Ctrl+/
+      self.root.bind('<Control-Key-\\>', lambda e: "break") # Блокируем Ctrl+\
+      self.root.bind('<Control-Key-[>', lambda e: "break")  # Блокируем Ctrl+[
+      self.root.bind('<Control-Key-]>', lambda e: "break")  # Блокируем Ctrl+]
+      self.root.bind('<Control-Key-;>', lambda e: "break")  # Блокируем Ctrl+;
+      self.root.bind('<Control-Key-\'>', lambda e: "break") # Блокируем Ctrl+'
+      self.root.bind('<Control-Key-,>', lambda e: "break")  # Блокируем Ctrl+,
+      self.root.bind('<Control-Key-.>', lambda e: "break")  # Блокируем Ctrl+.
     
     def close_current_tab(self, event=None):
         """Закрыть текущую вкладку"""
-        if self.current_tab:
-            self.close_tab(self.current_tab)
+        if self.current_project and self.current_project.current_tab:
+            self.close_tab(self.current_project.current_tab)
+        return "break"
     
     def on_closing(self):
         """Обработка закрытия окна"""
-        unsaved = []
-        for tab in self.tabs:
-            if tab.modified:
-                unsaved.append(tab.title)
-        
-        if unsaved:
-            response = messagebox.askyesnocancel(
-                "Несохраненные изменения",
-                f"Есть несохраненные файлы:\n{', '.join(unsaved)}\n\nСохранить перед выходом?"
-            )
-            if response is None:
-                return
-            elif response:
-                for tab in self.tabs:
-                    if tab.modified:
-                        self.select_tab(tab)
-                        self.save_file()
+        if self.current_project:
+            unsaved = []
+            for tab in self.current_project.tabs:
+                if tab.modified:
+                    unsaved.append(tab.title)
+            
+            if unsaved:
+                response = messagebox.askyesnocancel(
+                    "Несохраненные изменения",
+                    f"Есть несохраненные файлы:\n{', '.join(unsaved)}\n\nСохранить перед выходом?"
+                )
+                if response is None:
+                    return
+                elif response:
+                    for tab in self.current_project.tabs:
+                        if tab.modified:
+                            self.select_tab(tab)
+                            self.save_file()
+            
+            # Сохраняем состояние проекта
+            self.save_project_state()
         
         self.config["sidebar_visible"] = self.explorer_visible
         self.config["console_visible"] = self.console_visible
