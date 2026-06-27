@@ -1,0 +1,8 @@
+dist/
+venv/
+realcode_env/
+settings.json
+.env
+config.py
+version_info.txt
+*.exe
