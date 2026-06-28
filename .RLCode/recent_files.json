@@ -1,6 +1,7 @@
 [
-    "E:/RealCode\\main.py",
     "E:/RealCode\\config.py",
+    "E:/RealCode\\main.py",
+    "E:/RealCode\\register_realcode.py",
     "E:/RealCode\\build.py",
     "E:/RealCode\\.gitignore",
     "E:/RealCode/register_realcode.py",
@@ -17,6 +18,5 @@
     "D:/RealCode/html.svg",
     "D:/RealCode/install_deps.py",
     "D:/RealCode\\clean_icon_cache.bat",
-    "D:/RealCode\\RealCode.spec",
-    "D:/RealCode\\README.txt"
+    "D:/RealCode\\RealCode.spec"
 ]

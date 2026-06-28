@@ -14,11 +14,6 @@ import webbrowser
 import time
 from PIL import Image, ImageTk
 
-# Хардкорить токены, ID и другие важные данные, которые как бы нельзя вставлять просто в код - не лучшая идея. Поэтому, советую создать файл config.py и туда вставлять все то, что
-# важно для скрипта, но и важно для безопасности
-
-# Также, можно в config.py вставлять то, что упоминается постоянно и чтобы не лазить в коде
-
 from config import DISCORD_ID_CONFIG
 from config import VERSION_REALCODE
 from config import DOWNLOAD_URL
@@ -1250,7 +1245,7 @@ class UpdateChecker:
     def __init__(self, app):
         self.app = app
         self.current_version = VERSION
-        self.update_url = GITHUB_VERSION_URL
+        self.update_url = GITHUB_VERSION_URL  # из config.py
         self.update_info = None
         self.update_available = False
         self.update_dialog = None

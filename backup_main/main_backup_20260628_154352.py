@@ -1,6 +1,4 @@
 # main.py - RealCode
-import site
-import subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 import json
@@ -12,12 +10,6 @@ import re
 from datetime import datetime
 import webbrowser
 import time
-from PIL import Image, ImageTk
-
-# Хардкорить токены, ID и другие важные данные, которые как бы нельзя вставлять просто в код - не лучшая идея. Поэтому, советую создать файл config.py и туда вставлять все то, что
-# важно для скрипта, но и важно для безопасности
-
-# Также, можно в config.py вставлять то, что упоминается постоянно и чтобы не лазить в коде
 
 from config import DISCORD_ID_CONFIG
 from config import VERSION_REALCODE
@@ -91,18 +83,6 @@ DEFAULT_CONFIG = {
     "console_position": "bottom",
     "recent_projects": []
 }
-
-def load_icon(filename, size=(16, 16)):
-    """Загружает иконку из папки icons и масштабирует"""
-    path = os.path.join("icons", filename)
-    if os.path.exists(path):
-        try:
-            img = Image.open(path)
-            img = img.resize(size, Image.Resampling.LANCZOS)
-            return ImageTk.PhotoImage(img)
-        except:
-            pass
-    return None
 
 
 # ========== УТИЛИТЫ ==========
@@ -897,6 +877,77 @@ class WelcomeScreen:
         if self.frame and not self.frame.winfo_ismapped():
             self.frame.pack(fill=tk.BOTH, expand=True)
 
+
+class FindDialog:
+    def __init__(self, parent, text_widget):
+        self.parent = parent
+        self.text_widget = text_widget
+        self.dialog = None
+        self.search_var = tk.StringVar()
+        self._show()
+    
+    def _show(self):
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("Поиск")
+        self.dialog.geometry("400x150")
+        self.dialog.configure(bg=VSColorScheme.BG_MEDIUM)
+        self.dialog.transient(self.parent)
+        self.dialog.grab_set()
+        tk.Label(
+            self.dialog,
+            text="Найти:",
+            bg=VSColorScheme.BG_MEDIUM,
+            fg=VSColorScheme.FG
+        ).pack(pady=(10, 0))
+        entry = tk.Entry(
+            self.dialog,
+            textvariable=self.search_var,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            insertbackground=VSColorScheme.FG,
+            width=40
+        )
+        entry.pack(pady=5, padx=20)
+        entry.focus()
+        entry.bind('<Return>', lambda e: self._find())
+        btn_frame = tk.Frame(self.dialog, bg=VSColorScheme.BG_MEDIUM)
+        btn_frame.pack(pady=10)
+        tk.Button(
+            btn_frame,
+            text="Найти далее",
+            command=self._find,
+            bg=VSColorScheme.BUTTON_BG,
+            fg="white",
+            relief=tk.FLAT,
+            padx=15
+        ).pack(side=tk.LEFT, padx=5)
+        tk.Button(
+            btn_frame,
+            text="Закрыть",
+            command=self.dialog.destroy,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            relief=tk.FLAT,
+            padx=15
+        ).pack(side=tk.LEFT, padx=5)
+    
+    def _find(self):
+        search_text = self.search_var.get()
+        if not search_text:
+            return
+        self.text_widget.tag_remove("search", "1.0", tk.END)
+        start = self.text_widget.index(tk.INSERT)
+        pos = self.text_widget.search(search_text, start, tk.END)
+        if not pos:
+            pos = self.text_widget.search(search_text, "1.0", tk.END)
+        if pos:
+            end = f"{pos}+{len(search_text)}c"
+            self.text_widget.tag_add("search", pos, end)
+            self.text_widget.tag_config("search", background=VSColorScheme.SELECTION)
+            self.text_widget.mark_set(tk.INSERT, end)
+            self.text_widget.see(tk.INSERT)
+
+
 class SettingsDialog:
     def __init__(self, parent, config, callback):
         self.parent = parent
@@ -1199,15 +1250,6 @@ class DiscordPresence:
             file_type = "json"
         elif ext in ['.md', '.txt']:
             file_type = "text"
-        elif ext == '.cpp':
-            file_type = "cpp"
-        elif ext == '.cs':
-            file_type = "cs"
-        elif ext == '.h':
-            file_type = "holdc"
-        elif ext == '.c':
-            file_type = "c"
-
         return name, file_type
     
     def _update_presence(self):
@@ -1218,10 +1260,10 @@ class DiscordPresence:
             project_name = "Нет проекта" if not self.app.current_project else self.app.current_project.name
             files_count = len(self.app.current_project.tabs) if self.app.current_project else 0
             state_text = {
-                "editing": "Редактирует код",
-                "running": "Запустил выполнение кода",
-                "idle": "Отошел"
-            }.get(self.current_state, "Редактирует код")
+                "editing": "✏️ Редактирование",
+                "running": "▶️ Запуск кода",
+                "idle": "💤 В ожидании"
+            }.get(self.current_state, "✏️ Редактирование")
             details = f"{filename} • {project_name}"
             buttons = [
                 {"label": "RealCode in GitHub", "url": "https://github.com/Kish-Mish122/RealCode"},
@@ -1250,7 +1292,7 @@ class UpdateChecker:
     def __init__(self, app):
         self.app = app
         self.current_version = VERSION
-        self.update_url = GITHUB_VERSION_URL
+        self.update_url = GITHUB_VERSION_URL  # из config.py
         self.update_info = None
         self.update_available = False
         self.update_dialog = None
@@ -1277,7 +1319,7 @@ class UpdateChecker:
                 }
             )
 
-            print("🔍 Проверка обновлений")
+            print("🔍 Проверка обновлений через GitHub API")
 
             with urllib.request.urlopen(req, context=context, timeout=5) as response:
                 data = response.read().decode('utf-8')
@@ -1285,16 +1327,7 @@ class UpdateChecker:
 
             # Получаем версию из tag_name (например, "v3.1" -> "3.1")
             latest_tag = release_info.get('tag_name', '')
-            # Извлекаем версию вида x.y.z или x.y (числа с точками)
-            import re
-            match = re.search(r'(\d+(?:\.\d+)+)', latest_tag)
-            if match:
-                latest_version_str = match.group(1)
-            else:
-                # fallback: удаляем v и возможные точки в начале
-                latest_version_str = latest_tag.lstrip('v').lstrip('.')
-                if not latest_version_str:
-                    raise ValueError("Не удалось извлечь номер версии из тега")
+            latest_version_str = latest_tag.lstrip('v')  # убираем 'v' если есть
 
             # Ищем файл .exe в assets
             download_url = None
@@ -1330,7 +1363,7 @@ class UpdateChecker:
                 return False
 
         except Exception as e:
-            print(f"❌ Ошибка проверки обновлений: {e}")
+            print(f"❌ Ошибка проверки обновлений через GitHub API: {e}")
             if not silent:
                 self.app.log(f"⚠️ Не удалось проверить обновления: {e}")
                 return False
@@ -1341,7 +1374,7 @@ class UpdateChecker:
             return
 
         self.update_dialog = tk.Toplevel(self.app.root)
-        self.update_dialog.title("Новая версия RealCode")
+        self.update_dialog.title("Обновление RealCode")
         self.update_dialog.geometry("650x540")
         self.update_dialog.configure(bg=VSColorScheme.BG_MEDIUM)
         self.update_dialog.transient(self.app.root)
@@ -1411,7 +1444,7 @@ class UpdateChecker:
         if 'release_notes' in self.update_info:
             notes_frame = tk.Frame(self.update_dialog, bg=VSColorScheme.BG_LIGHT, padx=15, pady=15)
             notes_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=10)
-            notes_title = tk.Label(notes_frame, text="Что нового:", bg=VSColorScheme.BG_LIGHT,
+            notes_title = tk.Label(notes_frame, text="📝 Что нового:", bg=VSColorScheme.BG_LIGHT,
                                    fg=VSColorScheme.FG, font=("Segoe UI", 11, "bold"))
             notes_title.pack(anchor="w", pady=(0, 5))
             notes_text = tk.Text(notes_frame, height=6, bg=VSColorScheme.BG_LIGHT,
@@ -1434,12 +1467,12 @@ class UpdateChecker:
         btn_frame = tk.Frame(self.update_dialog, bg=VSColorScheme.BG_MEDIUM)
         btn_frame.pack(pady=20)
 
-        update_btn = tk.Button(btn_frame, text="⬇Обновиться", command=self._start_update,
+        update_btn = tk.Button(btn_frame, text="⬇️ Обновиться", command=self._start_update,
                                bg=VSColorScheme.ACCENT, fg="white", relief=tk.FLAT,
                                padx=25, pady=8, font=("Segoe UI", 11, "bold"), cursor="hand2")
         update_btn.pack(side=tk.LEFT, padx=10)
 
-        later_btn = tk.Button(btn_frame, text="Напомнить позже", command=self.update_dialog.destroy,
+        later_btn = tk.Button(btn_frame, text="⏰ Напомнить позже", command=self.update_dialog.destroy,
                               bg=VSColorScheme.BG_LIGHT, fg=VSColorScheme.FG, relief=tk.FLAT,
                               padx=25, pady=8, font=("Segoe UI", 11), cursor="hand2")
         later_btn.pack(side=tk.LEFT, padx=10)
@@ -1471,6 +1504,7 @@ class UpdateChecker:
     def _download_and_install(self):
         try:
             download_url = self.update_info.get('download_url')
+            print(f"Скачиваю с URL: {download_url}")
 
             if not download_url:
                 self._show_error("Ссылка для скачивания не найдена")
@@ -1483,6 +1517,7 @@ class UpdateChecker:
                 current_exe = os.path.abspath(__file__)
                 download_path = current_exe + ".new"
 
+            print(f"Сохраняю в: {download_path}")
             self._update_status("Скачивание обновления...", 10)
 
             import urllib.request
@@ -1563,8 +1598,6 @@ del /f /q "%~f0"
 
 # ========== ОСНОВНОЕ ПРИЛОЖЕНИЕ ==========
 class CodeEditorApp:
-    """Главный класс приложения RealCode"""
-    
     def __init__(self, root):
         self.root = root
         self.config = load_config()
@@ -1580,7 +1613,6 @@ class CodeEditorApp:
         self.discord = None
         self.updater = UpdateChecker(self)
         self.highlighter = None
-        self._dialog_open = False
         
         self._highlight_after_id = None
         self._minimap_after_id = None
@@ -1612,7 +1644,7 @@ class CodeEditorApp:
         self._setup_window()
         self._create_menu()
         self._create_widgets()
-        self._bind_global_shortcuts()
+        self._bind_global_shortcuts()   # ВСЕ горячие клавиши – по keycode, в любой раскладке
         
         self._init_discord()
         
@@ -1656,7 +1688,7 @@ class CodeEditorApp:
     def manual_check_updates(self):
         self.updater.check_for_updates(silent=False)
     
-    # ========== УПРАВЛЕНИЕ ПРОЕКТАМИ ==========
+    # ---------- УПРАВЛЕНИЕ ПРОЕКТАМИ ----------
     def load_project(self, path):
         if self.current_project:
             self.save_project_state()
@@ -1738,7 +1770,7 @@ class CodeEditorApp:
                 tab.pack(side=tk.LEFT, padx=2, pady=3)
             self.current_project.tabs = new_order
     
-    # ========== УПРАВЛЕНИЕ ВКЛАДКАМИ ==========
+    # ---------- УПРАВЛЕНИЕ ВКЛАДКАМИ ----------
     def add_new_tab(self, filename=None, content="", restore=False, pinned=False):
         if not self.current_project:
             temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
@@ -1798,7 +1830,7 @@ class CodeEditorApp:
         if self.editor:
             self.editor.edit_modified(False)
             self.editor.delete("1.0", tk.END)
-            display_content = content.rstrip('\n')
+            display_content = content.rstrip('\n')   # убираем лишний перевод
             self.editor.insert("1.0", display_content)
             self.editor.edit_modified(False)
             tab.set_modified(False)
@@ -1883,7 +1915,7 @@ class CodeEditorApp:
             self._close_tab(self.current_project.current_tab)
         return "break"
     
-    # ========== УПРАВЛЕНИЕ ФАЙЛАМИ ==========
+    # ---------- УПРАВЛЕНИЕ ФАЙЛАМИ ----------
     def open_file(self):
         if not self.current_project:
             temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
@@ -2043,7 +2075,7 @@ class CodeEditorApp:
                     expanded.append(values[0])
         self.current_project.set_expanded_folders(expanded)
     
-    # ========== РЕДАКТОР ==========
+    # ---------- РЕДАКТОР ----------
     def on_key_release(self, event):
         if not self.current_project or not self.current_project.current_tab or not self.editor:
             return
@@ -2134,7 +2166,7 @@ class CodeEditorApp:
             self.minimap._draw_visible_area()
         self._minimap_scroll_id = None
     
-    # ========== КОНТЕКСТНОЕ МЕНЮ И ПРАВКА ==========
+    # ---------- КОНТЕКСТНОЕ МЕНЮ ----------
     def show_editor_context_menu(self, event):
         if not self.current_project or not self.current_project.current_tab:
             return
@@ -2171,7 +2203,7 @@ class CodeEditorApp:
     
     def open_find(self, event=None):
         if self.editor and self.current_project and self.current_project.current_tab:
-            FindDialog(self.root, self.editor, self)
+            FindDialog(self.root, self.editor)
         return "break"
     
     def go_to_line(self, event=None):
@@ -2179,53 +2211,21 @@ class CodeEditorApp:
             return "break"
         try:
             total_lines = int(self.editor.index('end-1c').split('.')[0])
-            self._dialog_open = True
-            dialog = tk.Toplevel(self.root)
-            dialog.title("Перейти к строке")
-            dialog.geometry("300x120")
-            dialog.configure(bg=VSColorScheme.BG_MEDIUM)
-            dialog.transient(self.root)
-            dialog.grab_set()
-            dialog.resizable(False, False)
-            
-            tk.Label(dialog, text=f"Номер строки (1-{total_lines}):",
-                     bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG).pack(pady=(10, 5))
-            
-            var = tk.StringVar()
-            entry = tk.Entry(dialog, textvariable=var, bg=VSColorScheme.BG_LIGHT,
-                             fg=VSColorScheme.FG, insertbackground=VSColorScheme.FG, width=10)
-            entry.pack(pady=5)
-            entry.focus()
-            
-            def on_close():
-                self._dialog_open = False
-                dialog.destroy()
-                try:
-                    line = int(var.get())
-                    if 1 <= line <= total_lines:
-                        self.editor.mark_set(tk.INSERT, f"{line}.0")
-                        self.editor.see(tk.INSERT)
-                        self.update_cursor_position()
-                except ValueError:
-                    pass
-            
-            # Закрытие по Enter
-            entry.bind('<Return>', lambda e: on_close())
-            
-            dialog.protocol("WM_DELETE_WINDOW", on_close)
-            tk.Button(dialog, text="Перейти", command=on_close,
-                      bg=VSColorScheme.BUTTON_BG, fg="white", relief=tk.FLAT, padx=15).pack(pady=10)
-            
-            self.root.wait_window(dialog)
-            # Дополнительная страховка: если по какой-то причине флаг не сбросился
-            self._dialog_open = False
-            
+            line = simpledialog.askinteger(
+                "Перейти к строке",
+                f"Номер строки (1-{total_lines}):",
+                minvalue=1,
+                maxvalue=total_lines
+            )
+            if line:
+                self.editor.mark_set(tk.INSERT, f"{line}.0")
+                self.editor.see(tk.INSERT)
+                self.update_cursor_position()
         except Exception as e:
             print(f"Ошибка перехода к строке: {e}")
-            self._dialog_open = False
         return "break"
     
-    # ========== ЗАПУСК КОДА ==========
+    # ---------- ЗАПУСК КОДА ----------
     def run_code(self):
         if not self.current_project or not self.current_project.current_tab:
             messagebox.showinfo("Информация", "Сначала откройте или создайте файл")
@@ -2247,14 +2247,11 @@ class CodeEditorApp:
     
     def _run_thread(self, filename):
         try:
-            env = os.environ.copy()
-            env['PYTHONIOENCODING'] = 'utf-8'
             result = subprocess.run(
                 [sys.executable, filename],
                 capture_output=True,
                 text=True,
-                encoding='utf-8',
-                env=env
+                encoding='utf-8'
             )
             if result.stdout:
                 self.log(result.stdout)
@@ -2269,7 +2266,7 @@ class CodeEditorApp:
             if self.discord:
                 self.discord.set_state("editing")
     
-    # ========== КОНСОЛЬ ==========
+    # ---------- КОНСОЛЬ ----------
     def log(self, text):
         if not self.console or not self.console.winfo_exists():
             return
@@ -2295,7 +2292,7 @@ class CodeEditorApp:
             self.console.delete("1.0", tk.END)
             self.console.config(state=tk.DISABLED)
     
-    # ========== УПРАВЛЕНИЕ ЭКРАНОМ ПРИВЕТСТВИЯ ==========
+    # ---------- УПРАВЛЕНИЕ ЭКРАНОМ ПРИВЕТСТВИЯ ----------
     def show_welcome_screen(self):
         if self.welcome_screen and self.editor_container:
             self.editor_container.pack_forget()
@@ -2308,7 +2305,7 @@ class CodeEditorApp:
             self.welcome_screen.hide()
             self.editor_container.pack(fill=tk.BOTH, expand=True)
     
-    # ========== УПРАВЛЕНИЕ ПАНЕЛЯМИ ==========
+    # ---------- УПРАВЛЕНИЕ ПАНЕЛЯМИ ----------
     def toggle_explorer(self):
         if self.explorer_visible:
             self.main_paned.forget(self.explorer_frame)
@@ -2316,9 +2313,11 @@ class CodeEditorApp:
         else:
             explorer_pos = self.config.get("explorer_position", "left")
             if explorer_pos == "left":
-                self.main_paned.insert(0, self.explorer_frame, width=self.config.get("sidebar_width", 250))
+                self.main_paned.insert(0, self.explorer_frame,
+                                      width=self.config.get("sidebar_width", 250))
             else:
-                self.main_paned.add(self.explorer_frame, width=self.config.get("sidebar_width", 250))
+                self.main_paned.add(self.explorer_frame,
+                                   width=self.config.get("sidebar_width", 250))
             self.explorer_visible = True
         self.show_explorer_var.set(self.explorer_visible)
         self.config["sidebar_visible"] = self.explorer_visible
@@ -2330,9 +2329,11 @@ class CodeEditorApp:
         else:
             console_pos = self.config.get("console_position", "bottom")
             if console_pos == "bottom":
-                self.center_paned.add(self.console_area, height=self.config.get("console_height", 200))
+                self.center_paned.add(self.console_area,
+                                     height=self.config.get("console_height", 200))
             else:
-                self.center_paned.insert(0, self.console_area, height=self.config.get("console_height", 200))
+                self.center_paned.insert(0, self.console_area,
+                                       height=self.config.get("console_height", 200))
             self.console_visible = True
         self.show_console_var.set(self.console_visible)
         self.config["console_visible"] = self.console_visible
@@ -2377,7 +2378,7 @@ class CodeEditorApp:
                 self.center_paned.add(self.console_area, height=current_height)
                 self.center_paned.add(self.editor_area)
     
-    # ========== НАСТРОЙКИ ==========
+    # ---------- НАСТРОЙКИ ----------
     def zoom_in(self):
         self.config["font_size"] = min(24, self.config["font_size"] + 1)
         if self.editor:
@@ -2405,9 +2406,11 @@ class CodeEditorApp:
         if self.config.get("syntax_highlight", True) and self.highlighter:
             self.highlighter.highlight(force=True)
         if self.explorer_visible:
-            self.main_paned.paneconfig(self.explorer_frame, width=self.config.get("sidebar_width", 250))
+            self.main_paned.paneconfig(self.explorer_frame,
+                                      width=self.config.get("sidebar_width", 250))
         if self.console_visible:
-            self.center_paned.paneconfig(self.console_area, height=self.config.get("console_height", 200))
+            self.center_paned.paneconfig(self.console_area,
+                                       height=self.config.get("console_height", 200))
         if old_pos != self.config.get("explorer_position"):
             self.move_explorer()
         if old_console_pos != self.config.get("console_position"):
@@ -2422,13 +2425,12 @@ class CodeEditorApp:
                 self.minimap = None
         self.line_numbers.update_numbers()
         self.status_label.config(text="Настройки применены")
-        self.load_project_tree()
+        self.load_project_tree()  # обновить проводник при изменении show_hidden_files
     
-    # ========== МЕНЮ И ГОРЯЧИЕ КЛАВИШИ ==========
+    # ---------- МЕНЮ И ГОРЯЧИЕ КЛАВИШИ ----------
     def _create_menu(self):
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
-        
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Файл", menu=file_menu)
         file_menu.add_command(label="Новый (Ctrl+N)", command=self.add_new_tab)
@@ -2493,17 +2495,16 @@ class CodeEditorApp:
         help_menu.add_command(label="🔄 Проверить обновления", command=self.manual_check_updates)
         help_menu.add_command(label="О программе", command=self.show_about)
     
-    # ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ
     def _bind_global_shortcuts(self):
+        """Горячие клавиши – работают даже при залипшем Alt"""
         def handler(event):
-            if self._dialog_open:
-                return
             mod = event.state & 0x0F
             key = event.keycode
             ctrl = (mod & 4) != 0
             shift = (mod & 1) != 0
             alt = (mod & 8) != 0
 
+            # Ctrl-комбинации (Alt игнорируется)
             if key == 78 and ctrl and not shift:   # Ctrl+N
                 self.add_new_tab(); return "break"
             if key == 79 and ctrl and not shift:   # Ctrl+O
@@ -2522,26 +2523,30 @@ class CodeEditorApp:
                 self.copy(); return "break"
             if key == 86 and ctrl and not shift:   # Ctrl+V
                 self.paste(); return "break"
-            if key == 65 and ctrl and not shift:   # Ctrl+A (выделить всё)
-                self.select_all(); return "break"
             if key == 70 and ctrl and not shift:   # Ctrl+F
                 self.open_find(); return "break"
             if key == 71 and ctrl and not shift:   # Ctrl+G
                 self.go_to_line(); return "break"
+            if (key == 187 or key == 61) and ctrl and not shift:  # Ctrl++
+                self.zoom_in(); return "break"
+            if key == 189 and ctrl and not shift:  # Ctrl+-
+                self.zoom_out(); return "break"
+
+            # Ctrl+A – выделить всё (заменяет Alt+A)
+            if key == 65 and ctrl and not shift:
+                self.select_all(); return "break"
+
+            # Функциональные клавиши
             if key == 116 and mod == 0:   # F5
                 self.run_code(); return "break"
             if key == 112 and mod == 0:   # F1
                 self.open_settings(); return "break"
-            if (key == 187 or key == 61) and ctrl and not shift:  # Ctrl++
-                self.zoom_in(); return "break"
-            if key == 189 and ctrl and not shift:   # Ctrl+-
-                self.zoom_out(); return "break"
 
         self.root.bind_all('<Key>', handler)
         if self.editor:
             self.editor.bind('<Key>', handler)
-    
-    # ========== ДИАЛОГИ ==========
+
+    # ---------- ДИАЛОГИ ----------
     def show_about(self):
         about_text = f"""{APP_NAME} v{VERSION}
 
@@ -2569,7 +2574,7 @@ class CodeEditorApp:
         """
         messagebox.showinfo("О программе", about_text)
     
-    # ========== ИНТЕРФЕЙС ==========
+    # ---------- ИНТЕРФЕЙС ----------
     def _create_widgets(self):
         self._create_toolbar()
         main = tk.Frame(self.root, bg=VSColorScheme.BG_DARK)
@@ -2792,6 +2797,7 @@ class CodeEditorApp:
         self.editor_scrollbar.bind('<B1-Motion>', self.on_scroll)
         
         self.highlighter = SyntaxHighlighter(self.editor)
+        # Горячие клавиши уже привязаны глобально – отдельно для редактора не нужно
     
     def _create_console_area(self):
         self.console_area = tk.Frame(self.center_paned, bg=VSColorScheme.BG_DARK)
@@ -2880,7 +2886,7 @@ class CodeEditorApp:
         )
         self.pos_label.pack(side=tk.RIGHT)
     
-    # ========== УВЕДОМЛЕНИЕ ==========
+    # ---------- УВЕДОМЛЕНИЕ ----------
     def show_notification(self, message, duration=3000):
         if not self.root.winfo_exists():
             return
@@ -2906,7 +2912,7 @@ class CodeEditorApp:
         label.pack(fill=tk.BOTH, expand=True)
         self._notification.after(duration, self._notification.destroy)
     
-    # ========== ЗАВЕРШЕНИЕ РАБОТЫ ==========
+    # ---------- ЗАВЕРШЕНИЕ РАБОТЫ ----------
     def on_closing(self):
         if self.current_project:
             unsaved = []
@@ -2954,67 +2960,6 @@ class CodeEditorApp:
         self.root.quit()
         self.root.destroy()
 
-class FindDialog:
-    def __init__(self, parent, text_widget, app):
-        self.parent = parent
-        self.text_widget = text_widget
-        self.app = app
-        self.dialog = None
-        self.search_var = tk.StringVar()
-        self.app._dialog_open = True
-        self._show()
-    
-    def _show(self):
-        self.dialog = tk.Toplevel(self.parent)
-        self.dialog.title("Поиск")
-        self.dialog.geometry("400x150")
-        self.dialog.configure(bg=VSColorScheme.BG_MEDIUM)
-        self.dialog.transient(self.parent)
-        self.dialog.grab_set()
-        self.dialog.protocol("WM_DELETE_WINDOW", self._on_close)
-        # Сброс флага при любом уничтожении
-        self.dialog.bind('<Destroy>', lambda e: setattr(self.app, '_dialog_open', False))
-        
-        tk.Label(self.dialog, text="Найти:", bg=VSColorScheme.BG_MEDIUM,
-                 fg=VSColorScheme.FG).pack(pady=(10, 0))
-        
-        entry = tk.Entry(self.dialog, textvariable=self.search_var,
-                         bg=VSColorScheme.BG_LIGHT, fg=VSColorScheme.FG,
-                         insertbackground=VSColorScheme.FG, width=40)
-        entry.pack(pady=5, padx=20)
-        entry.focus()
-        entry.bind('<Return>', lambda e: self._find())
-        entry.bind('<Escape>', lambda e: self._on_close())
-        
-        btn_frame = tk.Frame(self.dialog, bg=VSColorScheme.BG_MEDIUM)
-        btn_frame.pack(pady=10)
-        tk.Button(btn_frame, text="Найти далее", command=self._find,
-                  bg=VSColorScheme.BUTTON_BG, fg="white", relief=tk.FLAT, padx=15
-                  ).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Закрыть", command=self._on_close,
-                  bg=VSColorScheme.BG_LIGHT, fg=VSColorScheme.FG, relief=tk.FLAT, padx=15
-                  ).pack(side=tk.LEFT, padx=5)
-    
-    def _find(self):
-        search_text = self.search_var.get()
-        if not search_text:
-            return
-        self.text_widget.tag_remove("search", "1.0", tk.END)
-        start = self.text_widget.index(tk.INSERT)
-        pos = self.text_widget.search(search_text, start, tk.END)
-        if not pos:
-            pos = self.text_widget.search(search_text, "1.0", tk.END)
-        if pos:
-            end = f"{pos}+{len(search_text)}c"
-            self.text_widget.tag_add("search", pos, end)
-            self.text_widget.tag_config("search", background=VSColorScheme.SELECTION)
-            self.text_widget.mark_set(tk.INSERT, end)
-            self.text_widget.see(tk.INSERT)
-    
-    def _on_close(self):
-        self.app._dialog_open = False
-        if self.dialog and self.dialog.winfo_exists():
-            self.dialog.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()

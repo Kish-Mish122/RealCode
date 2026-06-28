@@ -3,17 +3,62 @@ import sys
 import subprocess
 import time
 import glob
+import shutil
+from datetime import datetime
+
+def backup_main_py():
+    """Создание резервной копии main.py перед сборкой"""
+    if not os.path.exists("main.py"):
+        print("⚠️ main.py не найден, пропускаю бэкап")
+        return False
+    
+    # Проверка, что main.py не бинарный (нет нулевых байтов)
+    try:
+        with open("main.py", "rb") as f:
+            content = f.read()
+            if b'\x00' in content:
+                print("❌ ОШИБКА: main.py содержит нулевые байты! Файл повреждён.")
+                print("   Сборка прервана. Восстановите main.py из резервной копии.")
+                return False
+    except Exception as e:
+        print(f"⚠️ Не удалось проверить main.py: {e}")
+        return False
+    
+    # Создаём папку для бэкапов, если её нет
+    backup_dir = "backup_main"
+    os.makedirs(backup_dir, exist_ok=True)
+    
+    # Имя бэкапа с датой и временем
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_filename = f"main_backup_{timestamp}.py"
+    backup_path = os.path.join(backup_dir, backup_filename)
+    
+    try:
+        shutil.copy2("main.py", backup_path)
+        print(f"✅ Создана резервная копия: {backup_path}")
+        return True
+    except Exception as e:
+        print(f"⚠️ Не удалось создать бэкап: {e}")
+        return False
+
+def check_windows():
+    if os.name != 'nt':
+        print("Ошибка компиляции! Требуется Windows не менее 7")
+        sys.exit(1)
+    else:
+        print("Компиляция: Система: Windows")
+        main()
 
 def force_remove(path):
     """Принудительное удаление файла/папки"""
     try:
-        if os.path.isfile(path):
-            os.chmod(path, 0o777)
-            os.remove(path)
-            return True
-        elif os.path.isdir(path):
-            import stat
-            import shutil
+            if os.path.isfile(path):
+                os.chmod(path, 0o777)
+                os.remove(path)
+                return True
+            elif os.path.isdir(path):
+                import stat
+                import shutil
             
             for root, dirs, files in os.walk(path):
                 for file in files:
@@ -79,7 +124,7 @@ def cleanup_before_build():
 
 def cleanup_after_build():
     """Очистка после сборки"""
-    print("\n🧹 Очистка временных файлов...")
+    print("\nОчистка временных файлов...")
     
     # Удаляем только временные файлы
     temp_patterns = ["*.log", "*.tmp", "*.pyc", "*.pyo"]
@@ -106,7 +151,7 @@ def cleanup_after_build():
 
 def main():
     print("=" * 60)
-    print("               RealCode Builder v3.0")
+    print("               RealCode Builder v3.1")
     print("=" * 60)
     print()
     
@@ -116,9 +161,7 @@ def main():
         print("PyInstaller найден")
     except ImportError:
         print("PyInstaller не установлен!")
-        print("\nУстановка: pip install pyinstaller")
-        input("\nНажмите Enter для выхода...")
-        return
+        print("\nУстановить: pip install pyinstaller")
 
     icon_path = "icon.ico"
     if not os.path.exists(icon_path):
@@ -133,6 +176,17 @@ def main():
         # Показываем размер иконки
         size = os.path.getsize(icon_path)
         print(f"   Размер: {size} байт")
+
+        if not os.path.exists("main.py"):
+            print("Файл main.py не найден!")
+            input("\nНажмите Enter для выхода...")
+            return
+
+    # Создаём бэкап и проверяем целостность
+    if not backup_main_py():
+        print("❌ Сборка прервана из-за проблем с main.py")
+        input("\nНажмите Enter для выхода...")
+        return
     
     # Проверяем main.py
     if not os.path.exists("main.py"):
@@ -165,12 +219,12 @@ VSVersionInfo(
         u'040904B0',
         [StringStruct(u'CompanyName', u'K1sh-M1sh'),
         StringStruct(u'FileDescription', u'RealCode for Scripting'),
-        StringStruct(u'FileVersion', u'3.0.0'),
+        StringStruct(u'FileVersion', u'3.5.0'),
         StringStruct(u'InternalName', u'RealCode'),
         StringStruct(u'LegalCopyright', u'(C) 2026 K1sh-M1sh'),
         StringStruct(u'OriginalFilename', u'RealCode.exe'),
         StringStruct(u'ProductName', u'RealCode'),
-        StringStruct(u'ProductVersion', u'3.0.0'),
+        StringStruct(u'ProductVersion', u'3.5.0'),
         StringStruct(u'Comments', u'RealCode for Scripting')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [0x0409, 0x04B0])])
@@ -189,13 +243,13 @@ VSVersionInfo(
     # Очистка перед сборкой
     cleanup_before_build()
     
-    print("\n🚀 Начинаю сборку...\n")
+    print("\nНачинаю сборку...\n")
     
     # Базовая команда
     cmd = [
         "pyinstaller",
-        "--onefile",
         "--windowed",
+        "--onefile",
         "--name=RealCode",
         "--noconfirm",
         "--clean",
@@ -269,4 +323,4 @@ VSVersionInfo(
     input("\nНажмите Enter для выхода...")
 
 if __name__ == "__main__":
-    main()
+    check_windows()
