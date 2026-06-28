@@ -6,3 +6,4 @@ settings.json
 config.py
 version_info.txt
 *.exe
+.RLCode
