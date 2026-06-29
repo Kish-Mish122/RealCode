@@ -13,6 +13,27 @@ from datetime import datetime
 import webbrowser
 import time
 from PIL import Image, ImageTk
+import pyflakes.api
+import pycodestyle
+import threading
+import queue
+from dataclasses import dataclass
+from typing import List, Dict, Set
+
+from pyflakes import reporter
+from pyflakes.api import check
+from io import StringIO
+
+try:
+    if sys.platform == "win32" and sys.stdout is not None:
+        sys.stdout.reconfigure(encoding='utf-8')
+except (AttributeError, ValueError):
+    pass
+
+old_stdout = sys.stdout
+old_stderr = sys.stderr
+sys.stdout = StringIO()
+sys.stderr = StringIO()
 
 # Хардкорить токены, ID и другие важные данные, которые как бы нельзя вставлять просто в код - не лучшая идея. Поэтому, советую создать файл config.py и туда вставлять все то, что
 # важно для скрипта, но и важно для безопасности
@@ -33,6 +54,24 @@ APP_NAME = "RealCode"
 VERSION = VERSION_REALCODE
 CONFIG_FILE = "settings.json"
 DISCORD_CLIENT_ID = DISCORD_ID
+
+@dataclass
+class LintMessage:
+    line: int
+    column: int
+    message: str
+    code: str       # например, 'F401' для pyflakes, 'E501' для pep8
+    level: str      # 'error' или 'warning'
+    source: str     # 'pyflakes' или 'pep8'
+
+class StringIOReporter(reporter.Reporter):
+    def __init__(self, output):
+        self.output = output
+    def flake(self, message):
+        self.output.write(str(message) + "\n")
+    def unexpectedError(self, filename, msg):
+        self.output.write(f"{filename}: {msg}\n")
+
 
 class VSColorScheme:
     """Цветовая схема RealCode в стиле VS Code"""
@@ -336,14 +375,15 @@ class Project:
 
 # ========== КОМПОНЕНТЫ ИНТЕРФЕЙСА ==========
 class LineNumbers(tk.Canvas):
-    def __init__(self, parent, text_widget, *args, **kwargs):
+    def __init__(self, parent, text_widget, app=None, *args, **kwargs):
+        self.app = app
         super().__init__(parent, *args, **kwargs)
         self.text_widget = text_widget
         self.configure(bg=VSColorScheme.BG_MEDIUM, highlightthickness=0, width=50)
         if self.text_widget:
             self._bind_events()
             self.update_numbers()
-    
+
     def _bind_events(self):
         self.text_widget.bind('<KeyRelease>', lambda e: self.update_numbers())
         self.text_widget.bind('<MouseWheel>', lambda e: self.update_numbers())
@@ -351,7 +391,7 @@ class LineNumbers(tk.Canvas):
         self.text_widget.bind('<Button-5>', lambda e: self.update_numbers())
         self.text_widget.bind('<Configure>', lambda e: self.update_numbers())
         self.text_widget.bind('<<Modified>>', lambda e: self.update_numbers())
-    
+
     def update_numbers(self, event=None):
         self.delete("all")
         if not self.text_widget or not self.text_widget.winfo_exists():
@@ -360,6 +400,8 @@ class LineNumbers(tk.Canvas):
             total_lines = int(self.text_widget.index('end-1c').split('.')[0])
             first_line = int(self.text_widget.index("@0,0").split('.')[0])
             last_line = int(self.text_widget.index(f"@0,{self.text_widget.winfo_height()}").split('.')[0])
+            # Отладочный print теперь после объявления total_lines
+            # print("update_numbers called, total_lines:", total_lines)  # можно закомментировать или удалить
             for line_num in range(first_line, min(last_line + 1, total_lines + 1)):
                 dline_info = self.text_widget.dlineinfo(f"{line_num}.0")
                 if dline_info:
@@ -371,6 +413,16 @@ class LineNumbers(tk.Canvas):
                         fill=VSColorScheme.LINE_NUMBERS,
                         font=("Consolas", 9)
                     )
+                    # Маркеры ошибок (если есть linter)
+                    if self.app and hasattr(self.app, 'linter') and self.app.linter:
+                        messages = self.app.linter.get_messages_at_line(line_num)
+                        if messages:
+                            color = "red" if any(m.level == 'error' for m in messages) else "orange"
+                            self.create_oval(
+                                5, y + height//2 - 4,
+                                13, y + height//2 + 4,
+                                fill=color, outline=color
+                            )
         except Exception as e:
             print(f"Ошибка обновления номеров строк: {e}")
 
@@ -536,101 +588,194 @@ class Minimap(tk.Canvas):
 
 
 class SyntaxHighlighter:
+    FULL_HIGHLIGHT_LIMIT = 1 * 1024 * 1024  # 1 МБ
+
     def __init__(self, text_widget):
         self.text = text_widget
         self.highlight_enabled = True
-        self.max_file_size = 100000
+        self.current_language = 'python'
         self.update_after_id = None
         self.last_content = ""
+        self.compiled_patterns = {}  # для быстрого доступа
         self._setup_tags()
-        self._setup_patterns()
-    
+        self._load_language_patterns('python')
+
     def _setup_tags(self):
         self.text.tag_configure("keyword", foreground=VSColorScheme.KEYWORD)
         self.text.tag_configure("builtin", foreground=VSColorScheme.BUILTIN)
         self.text.tag_configure("decorator", foreground=VSColorScheme.DECORATOR)
         self.text.tag_configure("function", foreground=VSColorScheme.FUNCTION)
         self.text.tag_configure("class", foreground=VSColorScheme.CLASS)
-        self.text.tag_configure("comment", foreground=VSColorScheme.COMMENT, 
+        self.text.tag_configure("comment", foreground=VSColorScheme.COMMENT,
                                font=("Consolas", 10, "italic"))
         self.text.tag_configure("string", foreground=VSColorScheme.STRING)
         self.text.tag_configure("number", foreground=VSColorScheme.NUMBER)
-    
-    def _setup_patterns(self):
-        self.patterns = {
-            'keyword': r'\b(def|class|if|else|elif|for|while|import|from|return|try|except|finally|with|as|in|is|not|and|or|True|False|None|break|continue|pass|lambda|yield|async|await)\b',
-            'builtin': r'\b(print|len|range|input|str|int|float|list|dict|set|tuple|open|file|type|isinstance|issubclass|super|staticmethod|classmethod|property|abs|all|any|bin|bool|chr|complex|enumerate|filter|format|hex|id|max|min|next|oct|ord|pow|repr|reversed|round|sorted|sum|vars|zip)\b',
-            'decorator': r'@\w+',
-            'function': r'\b\w+(?=\s*\()',
-            'class': r'(?<=class\s)\w+',
-            'comment': r'#.*$',
-            'string': r'".*?"|\'.*?\'|""".*?"""|\'\'\'.*?\'\'\'',
+
+    def _load_language_patterns(self, language='python'):
+        base_patterns = {
             'number': r'\b\d+\.?\d*\b',
+            'function': r'\b\w+(?=\s*\()',
         }
-    
+
+        lang_patterns = {
+            'python': {
+                'keyword': r'\b(def|class|if|else|elif|for|while|import|from|return|try|except|finally|with|as|in|is|not|and|or|True|False|None|break|continue|pass|lambda|yield|async|await)\b',
+                'builtin': r'\b(print|len|range|input|str|int|float|list|dict|set|tuple|open|file|type|isinstance|issubclass|super|staticmethod|classmethod|property|abs|all|any|bin|bool|chr|complex|enumerate|filter|format|hex|id|max|min|next|oct|ord|pow|repr|reversed|round|sorted|sum|vars|zip)\b',
+                'decorator': r'@\w+',
+                'comment': r'#.*$',
+                'class': r'(?<=class\s)\w+',
+            },
+            'cpp': {
+                'keyword': r'\b(if|else|for|while|do|switch|case|break|continue|return|goto|void|int|float|#include|double|char|bool|long|short|unsigned|signed|const|static|virtual|override|final|class|struct|enum|typedef|using|namespace|template|typename|public|private|protected|friend|explicit|inline|new|delete|this|throw|try|catch|auto|decltype|nullptr|sizeof|alignof|noexcept)\b',
+                'builtin': r'\b(cout|cin|endl|string|vector|array|map|set|pair|make_pair|shared_ptr|unique_ptr|weak_ptr|move|forward)\b',
+                'decorator': r'__\w+__',
+                'comment': r'//.*$',
+                'block_comment': r'/\*.*?\*/',
+                'class': r'(?<=class\s)\w+|(?<=struct\s)\w+',
+            },
+            'csharp': {
+                'keyword': r'\b(if|else|for|while|do|switch|case|break|continue|return|using|goto|void|int|float|double|char|bool|long|short|uint|ulong|ushort|byte|sbyte|decimal|string|object|dynamic|var|const|static|readonly|class|struct|enum|interface|delegate|event|namespace|using|public|private|protected|internal|abstract|sealed|override|virtual|new|async|await|throw|try|catch|finally|lock|unsafe|fixed|sizeof|typeof|nameof|is|as|base|this)\b',
+                'builtin': r'\b(Console|WriteLine|Write|ReadLine|Read|StringBuilder|List|Dictionary|Tuple|DateTime|Task)\b',
+                'decorator': r'\[.*?\]',
+                'comment': r'//.*$',
+                'block_comment': r'/\*.*?\*/',
+                'class': r'(?<=class\s)\w+|(?<=struct\s)\w+',
+            },
+            'c': {
+                'keyword': r'\b(if|else|for|while|do|switch|case|break|continue|return|goto|void|int|float|double|char|long|short|unsigned|signed|const|static|volatile|extern|register|typedef|struct|union|enum|sizeof|auto|inline|restrict|_Bool|_Complex|_Imaginary)\b',
+                'builtin': r'\b(printf|scanf|fopen|fclose|fread|fwrite|malloc|calloc|realloc|free|memcpy|strlen|strcpy|strcat|strcmp|exit|system|getchar|putchar)\b',
+                'decorator': r'__attribute__\s*\(\(.*?\)\)',
+                'comment': r'//.*$',
+                'block_comment': r'/\*.*?\*/',
+                'class': r'(?<=struct\s)\w+',
+            },
+            'go': {
+                'keyword': r'\b(if|else|for|switch|case|break|continue|return|goto|func|go|select|defer|import|package|type|interface|struct|map|chan|var|const|range|fallthrough|default|append|cap|close|complex|copy|delete|imag|len|make|new|panic|print|println|real|recover)\b',
+                'builtin': r'\b(make|new|append|copy|delete|len|cap|close|complex|imag|real|panic|recover|print|println)\b',
+                'decorator': r'//go:.*$',
+                'comment': r'//.*$',
+                'block_comment': r'/\*.*?\*/',
+                'class': r'(?<=type\s)\w+',
+            },
+            'holyc': {
+                'keyword': r'\b(if|else|for|while|do|switch|case|break|continue|return|goto|void|int|float|double|char|long|short|unsigned|signed|const|static|volatile|typedef|struct|union|enum|sizeof|auto|register|extern|public|private|import|class|new|delete|this|base|using|namespace)\b',
+                'builtin': r'\b(Print|PrintF|PrintLn|Input|PutChar|GetChar|Open|Close|Read|Write|Seek|Malloc|Free|MemSet|MemCopy|StrLen|StrCpy|StrCat|StrCmp|Exit|System|Yield|Sleep)\b',
+                'decorator': r'\[.*?\]',
+                'comment': r'//.*$',
+                'block_comment': r'/\*.*?\*/',
+                'class': r'(?<=class\s)\w+|(?<=struct\s)\w+',
+            }
+        }
+
+        lang_data = lang_patterns.get(language, lang_patterns['python'])
+        self.patterns = {**base_patterns}
+        self.block_patterns = {}
+
+        for key, pattern in lang_data.items():
+            if key == 'block_comment':
+                self.block_patterns['comment'] = pattern
+            else:
+                self.patterns[key] = pattern
+
+        # Компилируем все паттерны для ускорения
+        self.compiled_patterns = {}
+        for tag, pat in self.patterns.items():
+            try:
+                self.compiled_patterns[tag] = re.compile(pat, re.MULTILINE)
+            except:
+                pass
+        for tag, pat in self.block_patterns.items():
+            try:
+                self.compiled_patterns[tag] = re.compile(pat, re.DOTALL | re.MULTILINE)
+            except:
+                pass
+
+        self.current_language = language
+
+    def set_language(self, extension):
+        ext_map = {
+            '.py': 'python',
+            '.cpp': 'cpp', '.cxx': 'cpp', '.cc': 'cpp',
+            '.c': 'c',
+            '.cs': 'csharp',
+            '.go': 'go',
+            '.hc': 'holyc', '.holyc': 'holyc',
+        }
+        lang = ext_map.get(extension.lower(), 'python')
+        self._load_language_patterns(lang)
+
     def should_highlight(self):
-        if not self.highlight_enabled:
-            return False
+        return self.highlight_enabled
+
+    def get_file_size(self):
         try:
-            content_length = len(self.text.get("1.0", tk.END))
-            return content_length < self.max_file_size
+            return len(self.text.get("1.0", tk.END).encode('utf-8'))
         except:
-            return False
-    
+            return 0
+
     def highlight(self, force=False):
         if not self.should_highlight():
             return
+        if self.get_file_size() > self.FULL_HIGHLIGHT_LIMIT:
+            self.highlight_visible()
+            return
+
         try:
             current_content = self.text.get("1.0", tk.END)
             if not force and current_content == self.last_content:
                 return
             self.last_content = current_content
-            for tag_name in self.patterns.keys():
-                self.text.tag_remove(tag_name, "1.0", tk.END)
-            for tag_name, pattern in self.patterns.items():
-                self._apply_pattern(tag_name, pattern, current_content)
+
+            for tag in ('keyword', 'builtin', 'decorator', 'function', 'class', 'comment', 'string', 'number'):
+                self.text.tag_remove(tag, "1.0", tk.END)
+
+            # Применяем все скомпилированные паттерны
+            for tag_name, compiled in self.compiled_patterns.items():
+                try:
+                    for match in compiled.finditer(current_content):
+                        start = f"1.0+{match.start()}c"
+                        end = f"1.0+{match.end()}c"
+                        self.text.tag_add(tag_name, start, end)
+                except Exception as e:
+                    print(f"Ошибка применения паттерна {tag_name}: {e}")
+
         except Exception as e:
             print(f"Ошибка подсветки: {e}")
-    
-    def _apply_pattern(self, tag_name, pattern, text):
-        try:
-            for match in re.finditer(pattern, text, re.MULTILINE):
-                start = f"1.0+{match.start()}c"
-                end = f"1.0+{match.end()}c"
-                self.text.tag_add(tag_name, start, end)
-        except Exception as e:
-            print(f"Ошибка применения паттерна {tag_name}: {e}")
-    
+
     def incremental_highlight(self, start_line=1, end_line=None):
         if not self.should_highlight():
             return
+        if end_line is None:
+            end_line = start_line
+
+        for tag in ('keyword', 'builtin', 'decorator', 'function', 'class', 'comment', 'string', 'number'):
+            self.text.tag_remove(tag, f"{start_line}.0", f"{end_line + 1}.0")
+
+        text_range = self.text.get(f"{start_line}.0", f"{end_line + 1}.0")
+        if not text_range:
+            return
+
+        base_offset = 0
         try:
-            if end_line is None:
-                end_line = int(self.text.index('end-1c').split('.')[0])
-            for tag_name in self.patterns.keys():
-                self.text.tag_remove(tag_name, f"{start_line}.0", f"{end_line}.0")
-            text_to_highlight = self.text.get(f"{start_line}.0", f"{end_line}.0")
-            if not text_to_highlight:
-                return
+            for i in range(1, start_line):
+                line_len = len(self.text.get(f"{i}.0", f"{i}.end")) + 1
+                base_offset += line_len
+        except:
+            base_offset = 0
+
+        # Используем скомпилированные паттерны, но пропускаем блочные комментарии
+        for tag_name, compiled in self.compiled_patterns.items():
+            if tag_name == 'comment' and hasattr(self, 'block_patterns') and 'comment' in self.block_patterns:
+                continue  # пропускаем блочные комментарии в инкрементальной
             try:
-                base_offset = int(self.text.index(f"{start_line}.0").split('.')[1])
-                for i in range(1, start_line):
-                    line_length = len(self.text.get(f"{i}.0", f"{i}.end"))
-                    base_offset += line_length + 1
+                for match in compiled.finditer(text_range):
+                    abs_start = base_offset + match.start()
+                    abs_end = base_offset + match.end()
+                    start_pos = f"1.0+{abs_start}c"
+                    end_pos = f"1.0+{abs_end}c"
+                    self.text.tag_add(tag_name, start_pos, end_pos)
             except:
-                base_offset = 0
-            for tag_name, pattern in self.patterns.items():
-                try:
-                    for match in re.finditer(pattern, text_to_highlight, re.MULTILINE):
-                        abs_start = base_offset + match.start()
-                        abs_end = base_offset + match.end()
-                        start_pos = f"1.0+{abs_start}c"
-                        end_pos = f"1.0+{abs_end}c"
-                        self.text.tag_add(tag_name, start_pos, end_pos)
-                except:
-                    pass
-        except Exception as e:
-            print(f"Ошибка инкрементальной подсветки: {e}")
+                pass
 
     def highlight_visible(self):
         if not self.should_highlight():
@@ -638,8 +783,13 @@ class SyntaxHighlighter:
         try:
             first = int(self.text.index("@0,0").split('.')[0])
             last = int(self.text.index(f"@0,{self.text.winfo_height()}").split('.')[0])
-            first = max(1, first - 3)
-            last = min(int(self.text.index('end-1c').split('.')[0]), last + 3)
+            # Если высота окна не определена (виджет ещё не отрисован), берем первые 50 строк
+            if last <= first:
+                last = first + 50
+            first = max(1, first - 2)
+            last = min(int(self.text.index('end-1c').split('.')[0]), last + 2)
+            if last - first > 100:
+                last = first + 100
             self.incremental_highlight(first, last)
         except Exception as e:
             print(f"Ошибка подсветки видимой области: {e}")
@@ -1566,6 +1716,7 @@ class CodeEditorApp:
     """Главный класс приложения RealCode"""
     
     def __init__(self, root):
+        print("Привет, Юзер! Удачного кодинга!")
         self.root = root
         self.config = load_config()
         self.root.title(APP_NAME)
@@ -1580,6 +1731,7 @@ class CodeEditorApp:
         self.discord = None
         self.updater = UpdateChecker(self)
         self.highlighter = None
+        self.linter = None
         self._dialog_open = False
         
         self._highlight_after_id = None
@@ -1648,6 +1800,14 @@ class CodeEditorApp:
         except Exception as e:
             print(f"Ошибка инициализации Discord: {e}")
             self.discord = None
+
+    def _is_python_file(self, tab):
+        if not self.current_project or not tab:
+            return False
+        filename = self.current_project.files.get(tab)
+        if filename:
+            return filename.endswith('.py')
+        return False
     
     def _check_updates_thread(self):
         time.sleep(2)
@@ -1777,9 +1937,11 @@ class CodeEditorApp:
             if self.config.get("save_scroll_position", True):
                 scroll_pos = self.editor.yview()[0]
                 self.current_project.current_tab.save_scroll_position(scroll_pos)
+
         for t in self.current_project.tabs:
             t.set_active(t == tab)
         self.current_project.current_tab = tab
+
         if tab in self.current_project.file_contents:
             content = self.current_project.file_contents[tab]
         else:
@@ -1795,6 +1957,7 @@ class CodeEditorApp:
             else:
                 content = ""
                 self.current_project.file_contents[tab] = ""
+
         if self.editor:
             self.editor.edit_modified(False)
             self.editor.delete("1.0", tk.END)
@@ -1802,29 +1965,42 @@ class CodeEditorApp:
             self.editor.insert("1.0", display_content)
             self.editor.edit_modified(False)
             tab.set_modified(False)
+
             if self.config.get("save_scroll_position", True):
                 scroll_pos = tab.get_scroll_position()
                 if scroll_pos > 0:
                     self.editor.yview_moveto(scroll_pos)
+
             self.editor.mark_set(tk.INSERT, "1.0")
             self.editor.see("1.0")
-            if self.config.get("syntax_highlight", True) and self.highlighter:
-                filename = self.current_project.files.get(tab)
-                if filename:
-                    ext = os.path.splitext(filename)[1].lower()
-                    supported_exts = ['.py']
-                    if ext not in supported_exts:
-                        self.show_notification("⚠️ Подсветка синтаксиса не поддерживается для этого файла", duration=3000)
-                        self.highlighter.highlight_enabled = False
-                    else:
-                        self.highlighter.highlight_enabled = True
+
+        if self._is_python_file(tab) and self.linter is not None:
+            self.linter.schedule_lint(1000)
+
+            # === ПОДСВЕТКА ===
+        if self.config.get("syntax_highlight", True) and self.highlighter:
+            filename = self.current_project.files.get(tab)
+            if filename:
+                ext = os.path.splitext(filename)[1].lower()
+                self.highlighter.set_language(ext)
+                self.highlighter.highlight_enabled = True
+            else:
+                self.highlighter.highlight_enabled = True
+
+            if self.highlighter.highlight_enabled:
+                # Принудительно обновляем геометрию перед подсветкой
+                self.editor.update_idletasks()
+                file_size = self.highlighter.get_file_size()
+                if file_size <= self.highlighter.FULL_HIGHLIGHT_LIMIT:
+                    self.highlighter.highlight(force=True)
                 else:
-                    self.highlighter.highlight_enabled = True
-                if self.highlighter.highlight_enabled:
                     self.highlighter.highlight_visible()
+
+            # Обновляем номера строк и мини-карту
             self.line_numbers.update_numbers()
             if self.minimap:
                 self.minimap.update_minimap()
+
         if self.discord:
             self.discord._update_presence()
         self.current_project.save_state()
@@ -2048,30 +2224,64 @@ class CodeEditorApp:
         if not self.current_project or not self.current_project.current_tab or not self.editor:
             return
         self.update_cursor_position()
-        self.line_numbers.update_numbers()
-        try:
-            current_line = int(self.editor.index(tk.INSERT).split('.')[0])
-        except:
-            current_line = 1
+
+        # Обновляем номера строк с задержкой
+        if hasattr(self, '_line_numbers_after_id') and self._line_numbers_after_id:
+            self.root.after_cancel(self._line_numbers_after_id)
+        self._line_numbers_after_id = self.root.after(200, self._update_line_numbers_delayed)
+
+        if self.config.get("syntax_highlight", True) and self._is_python_file(self.current_project.current_tab):
+            if self.linter is not None:
+                self.linter.schedule_lint(800)
+
+        # Подсветка синтаксиса
         if self.config.get("syntax_highlight", True) and self.highlighter:
-            start_line = max(1, current_line - 2)
-            end_line = current_line + 2
-            self.highlighter.incremental_highlight(start_line, end_line)
-        if self._highlight_after_id:
-            self.root.after_cancel(self._highlight_after_id)
-        self._highlight_after_id = self.root.after(1000, self._delayed_full_highlight)
+            file_size = self.highlighter.get_file_size()
+            # Для файлов > 50 КБ не делаем инкрементальную подсветку при наборе (только после паузы)
+            if file_size > 50 * 1024:
+                if self._highlight_after_id:
+                    self.root.after_cancel(self._highlight_after_id)
+                self._highlight_after_id = self.root.after(500, self._delayed_highlight_visible)
+            else:
+                # Для маленьких файлов – подсвечиваем только текущую строку
+                try:
+                    current_line = int(self.editor.index(tk.INSERT).split('.')[0])
+                except:
+                    current_line = 1
+                self.highlighter.incremental_highlight(current_line, current_line)
+                # Полная подсветка после паузы (для обновления блочных комментариев и остальных строк)
+                if self._highlight_after_id:
+                    self.root.after_cancel(self._highlight_after_id)
+                self._highlight_after_id = self.root.after(600, self._delayed_full_highlight)
+
+        # Автосохранение
         if self.config.get("auto_save", False) and self.current_project.current_tab:
             if self.auto_save_timer:
                 self.root.after_cancel(self.auto_save_timer)
             self.auto_save_timer = self.root.after(2000, self._auto_save)
+
+        # Мини-карта с задержкой
         if self.minimap:
             if self._minimap_after_id:
                 self.root.after_cancel(self._minimap_after_id)
             self._minimap_after_id = self.root.after(500, self._update_minimap_delayed)
+
+    def _update_line_numbers_delayed(self):
+        if self.line_numbers and self.line_numbers.winfo_exists():
+            self.line_numbers.update_numbers()
+        self._line_numbers_after_id = None
     
     def _delayed_full_highlight(self):
         if self.highlighter and self.current_project and self.current_project.current_tab:
-            self.highlighter.highlight()
+            if self.highlighter.get_file_size() > self.highlighter.FULL_HIGHLIGHT_LIMIT:
+                self.highlighter.highlight_visible()
+            else:
+                self.highlighter.highlight(force=False)
+        self._highlight_after_id = None
+
+    def _delayed_highlight_visible(self):
+        if self.highlighter and self.current_project and self.current_project.current_tab:
+            self.highlighter.highlight_visible()
         self._highlight_after_id = None
     
     def _update_minimap_delayed(self):
@@ -2147,83 +2357,65 @@ class CodeEditorApp:
         menu.add_separator()
         menu.add_command(label="Найти", command=self.open_find)
         menu.add_command(label="Перейти к строке", command=self.go_to_line)
+
+        # Проверяем, есть ли линт-сообщения в строке под курсором
+        if self.linter and self._is_python_file(self.current_project.current_tab):
+            try:
+                # Получаем индекс строки по координатам клика
+                index = self.editor.index(f"@{event.x},{event.y}")
+                line = int(index.split('.')[0])
+                messages = self.linter.get_messages_at_line(line)
+                if messages:
+                    menu.add_separator()
+                    submenu = tk.Menu(menu, tearoff=0)
+                    menu.add_cascade(label="⚠️ Предупреждения", menu=submenu)
+                    for msg in messages[:5]:  # показываем не более 5
+                        text = f"{msg.code}: {msg.message[:50]}"
+                        submenu.add_command(
+                            label=text,
+                            command=lambda m=msg: self._ignore_lint_message(m)
+                        )
+                    # Добавляем пункт "Игнорировать все в этой строке"
+                    if len(messages) > 1:
+                        menu.add_command(
+                            label="Игнорировать все предупреждения в строке",
+                            command=lambda msgs=messages: self._ignore_all_in_line(msgs)
+                        )
+            except:
+                pass
+
         menu.post(event.x_root, event.y_root)
-    
+
     def cut(self, event=None):
         if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Cut>>")
         return "break"
-    
+
     def copy(self, event=None):
         if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Copy>>")
         return "break"
-    
+
     def paste(self, event=None):
         if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.event_generate("<<Paste>>")
         return "break"
-    
+
     def select_all(self, event=None):
         if self.editor and self.current_project and self.current_project.current_tab:
             self.editor.tag_add("sel", "1.0", tk.END)
         return "break"
-    
-    def open_find(self, event=None):
-        if self.editor and self.current_project and self.current_project.current_tab:
-            FindDialog(self.root, self.editor, self)
-        return "break"
-    
-    def go_to_line(self, event=None):
-        if not self.editor or not self.current_project or not self.current_project.current_tab:
-            return "break"
-        try:
-            total_lines = int(self.editor.index('end-1c').split('.')[0])
-            self._dialog_open = True
-            dialog = tk.Toplevel(self.root)
-            dialog.title("Перейти к строке")
-            dialog.geometry("300x120")
-            dialog.configure(bg=VSColorScheme.BG_MEDIUM)
-            dialog.transient(self.root)
-            dialog.grab_set()
-            dialog.resizable(False, False)
-            
-            tk.Label(dialog, text=f"Номер строки (1-{total_lines}):",
-                     bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG).pack(pady=(10, 5))
-            
-            var = tk.StringVar()
-            entry = tk.Entry(dialog, textvariable=var, bg=VSColorScheme.BG_LIGHT,
-                             fg=VSColorScheme.FG, insertbackground=VSColorScheme.FG, width=10)
-            entry.pack(pady=5)
-            entry.focus()
-            
-            def on_close():
-                self._dialog_open = False
-                dialog.destroy()
-                try:
-                    line = int(var.get())
-                    if 1 <= line <= total_lines:
-                        self.editor.mark_set(tk.INSERT, f"{line}.0")
-                        self.editor.see(tk.INSERT)
-                        self.update_cursor_position()
-                except ValueError:
-                    pass
-            
-            # Закрытие по Enter
-            entry.bind('<Return>', lambda e: on_close())
-            
-            dialog.protocol("WM_DELETE_WINDOW", on_close)
-            tk.Button(dialog, text="Перейти", command=on_close,
-                      bg=VSColorScheme.BUTTON_BG, fg="white", relief=tk.FLAT, padx=15).pack(pady=10)
-            
-            self.root.wait_window(dialog)
-            # Дополнительная страховка: если по какой-то причине флаг не сбросился
-            self._dialog_open = False
-            
-        except Exception as e:
-            print(f"Ошибка перехода к строке: {e}")
-            self._dialog_open = False
-        return "break"
+
+    def _ignore_lint_message(self, msg):
+        """Игнорировать конкретное сообщение."""
+        if self.linter is not None:
+            self.linter.ignore_message(msg)
+
+    def _ignore_all_in_line(self, messages):
+        """Игнорировать все сообщения в строке."""
+        for msg in messages:
+            if self.linter is not None:
+                self.linter.ignore_message(msg)
     
     # ========== ЗАПУСК КОДА ==========
     def run_code(self):
@@ -2244,6 +2436,108 @@ class CodeEditorApp:
             self.log('='*50)
             thread = threading.Thread(target=self._run_thread, args=(filename,), daemon=True)
             thread.start()
+
+    def open_find(self, event=None):
+        if self.editor and self.current_project and self.current_project.current_tab:
+            from tkinter import Toplevel, Label, Entry, Button, Frame
+            dialog = Toplevel(self.root)
+            dialog.title("Найти")
+            dialog.geometry("400x150")
+            dialog.configure(bg=VSColorScheme.BG_MEDIUM)
+            dialog.transient(self.root)
+            dialog.grab_set()
+            dialog.resizable(False, False)
+            
+            Label(dialog, text="Найти:", bg=VSColorScheme.BG_MEDIUM,
+                fg=VSColorScheme.FG).pack(pady=(10, 0))
+            search_var = tk.StringVar()
+            entry = Entry(dialog, textvariable=search_var, bg=VSColorScheme.BG_LIGHT,
+                        fg=VSColorScheme.FG, insertbackground=VSColorScheme.FG, width=40)
+            entry.pack(pady=5, padx=20)
+            entry.focus()
+            entry.bind('<Return>', lambda e: self._find_text(search_var.get()))
+            entry.bind('<Escape>', lambda e: dialog.destroy())
+            
+            btn_frame = Frame(dialog, bg=VSColorScheme.BG_MEDIUM)
+            btn_frame.pack(pady=10)
+            Button(btn_frame, text="Найти далее", command=lambda: self._find_text(search_var.get()),
+                bg=VSColorScheme.BUTTON_BG, fg="white", relief=tk.FLAT, padx=15).pack(side=tk.LEFT, padx=5)
+            Button(btn_frame, text="Закрыть", command=dialog.destroy,
+                bg=VSColorScheme.BG_LIGHT, fg=VSColorScheme.FG, relief=tk.FLAT, padx=15).pack(side=tk.LEFT, padx=5)
+        return "break"
+
+    def _find_text(self, search_text):
+        if not search_text:
+            return
+        self.editor.tag_remove("search", "1.0", tk.END)
+        start = self.editor.index(tk.INSERT)
+        pos = self.editor.search(search_text, start, tk.END)
+        if not pos:
+            pos = self.editor.search(search_text, "1.0", tk.END)
+        if pos:
+            end = f"{pos}+{len(search_text)}c"
+            self.editor.tag_add("search", pos, end)
+            self.editor.tag_config("search", background=VSColorScheme.SELECTION)
+            self.editor.mark_set(tk.INSERT, end)
+            self.editor.see(tk.INSERT)
+
+    def go_to_line(self, event=None):
+        if not self.editor or not self.current_project or not self.current_project.current_tab:
+            return "break"
+        try:
+            total_lines = int(self.editor.index('end-1c').split('.')[0])
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Перейти к строке")
+            dialog.geometry("300x120")
+            dialog.configure(bg=VSColorScheme.BG_MEDIUM)
+            dialog.transient(self.root)
+            dialog.grab_set()
+            dialog.resizable(False, False)
+            
+            tk.Label(dialog, text=f"Номер строки (1-{total_lines}):",
+                    bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG).pack(pady=(10, 5))
+            var = tk.StringVar()
+            entry = tk.Entry(dialog, textvariable=var, bg=VSColorScheme.BG_LIGHT,
+                            fg=VSColorScheme.FG, insertbackground=VSColorScheme.FG, width=10)
+            entry.pack(pady=5)
+            entry.focus()
+            entry.bind('<Return>', lambda e: self._go_to_line_confirm(dialog, var, total_lines))
+            entry.bind('<Escape>', lambda e: dialog.destroy())
+            
+            def on_close():
+                try:
+                    line = int(var.get())
+                    if 1 <= line <= total_lines:
+                        self.editor.mark_set(tk.INSERT, f"{line}.0")
+                        self.editor.see(tk.INSERT)
+                        self.update_cursor_position()
+                except ValueError:
+                    pass
+                dialog.destroy()
+            
+            dialog.protocol("WM_DELETE_WINDOW", on_close)
+            tk.Button(dialog, text="Перейти", command=on_close,
+                    bg=VSColorScheme.BUTTON_BG, fg="white", relief=tk.FLAT, padx=15).pack(pady=10)
+            
+            # Добавим обработку Enter через отдельную функцию, чтобы не дублировать код
+            def on_enter(e):
+                on_close()
+            entry.bind('<Return>', on_enter)
+            
+        except Exception as e:
+            print(f"Ошибка перехода к строке: {e}")
+        return "break"
+
+    def _go_to_line_confirm(self, dialog, var, total_lines):
+        try:
+            line = int(var.get())
+            if 1 <= line <= total_lines:
+                self.editor.mark_set(tk.INSERT, f"{line}.0")
+                self.editor.see(tk.INSERT)
+                self.update_cursor_position()
+        except ValueError:
+            pass
+        dialog.destroy()
     
     def _run_thread(self, filename):
         try:
@@ -2396,31 +2690,66 @@ class CodeEditorApp:
         old_console_pos = self.config.get("console_position")
         self.config = new_config
         save_config(self.config)
+
+        # Применяем настройки шрифта
         if self.editor:
             self.editor.config(
                 font=(self.config["font_family"], self.config["font_size"]),
                 wrap=tk.WORD if self.config.get("word_wrap", False) else tk.NONE,
                 tabs=(self.config["tab_size"] * 10,)
             )
+
+        # Подсветка синтаксиса
         if self.config.get("syntax_highlight", True) and self.highlighter:
-            self.highlighter.highlight(force=True)
+            tab = self.current_project.current_tab if self.current_project else None
+            if tab:
+                filename = self.current_project.files.get(tab)
+                if filename:
+                    ext = os.path.splitext(filename)[1].lower()
+                    self.highlighter.set_language(ext)
+                    self.highlighter.highlight_enabled = True
+                else:
+                    self.highlighter.highlight_enabled = True
+
+                if self.highlighter.highlight_enabled:
+                    self.editor.update_idletasks()
+                    file_size = self.highlighter.get_file_size()
+                    if file_size <= self.highlighter.FULL_HIGHLIGHT_LIMIT:
+                        self.highlighter.highlight(force=True)
+                    else:
+                        self.highlighter.highlight_visible()
+
+        # Размеры панелей
         if self.explorer_visible:
             self.main_paned.paneconfig(self.explorer_frame, width=self.config.get("sidebar_width", 250))
         if self.console_visible:
             self.center_paned.paneconfig(self.console_area, height=self.config.get("console_height", 200))
+
+        # Перемещение панелей, если изменилась позиция
         if old_pos != self.config.get("explorer_position"):
             self.move_explorer()
         if old_console_pos != self.config.get("console_position"):
             self.move_console()
+
+        # Мини-карта
         if self.config.get("minimap_enabled", True):
-            if not self.minimap:
-                self.minimap = Minimap(self.editor_container, self.editor)
-                self.minimap.pack(side=tk.RIGHT, fill=tk.Y)
+            if self.highlighter and self.highlighter.get_file_size() > 50 * 1024 * 1024:
+                if self.minimap:
+                    self.minimap.destroy()
+                    self.minimap = None
+            else:
+                if not self.minimap and self.editor:
+                    self.minimap = Minimap(self.editor_container, self.editor)
+                    self.minimap.pack(side=tk.RIGHT, fill=tk.Y)
         else:
             if self.minimap:
                 self.minimap.destroy()
                 self.minimap = None
-        self.line_numbers.update_numbers()
+
+        # Обновляем номера строк
+        if self.line_numbers:
+            self.line_numbers.update_numbers()
+
         self.status_label.config(text="Настройки применены")
         self.load_project_tree()
     
@@ -2727,12 +3056,14 @@ class CodeEditorApp:
         self.tab_bar = tk.Frame(self.editor_area, bg=VSColorScheme.BG_MEDIUM, height=55)
         self.tab_bar.pack(fill=tk.X)
         self.tab_bar.pack_propagate(False)
+
         self.tabs_container = tk.Frame(self.tab_bar, bg=VSColorScheme.BG_MEDIUM, height=50)
         self.tabs_container.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.tabs_container.pack_propagate(False)
+
         new_tab_btn = tk.Label(
             self.tab_bar,
-            text="+  Новая вкладка",
+            text="+  Добавить вкладку",
             bg=VSColorScheme.BG_MEDIUM,
             fg=VSColorScheme.FG,
             font=("Segoe UI", 10),
@@ -2744,13 +3075,18 @@ class CodeEditorApp:
         new_tab_btn.bind('<Enter>', lambda e: new_tab_btn.configure(bg=VSColorScheme.BG_LIGHT))
         new_tab_btn.bind('<Leave>', lambda e: new_tab_btn.configure(bg=VSColorScheme.BG_MEDIUM))
         new_tab_btn.bind('<Button-1>', lambda e: self.add_new_tab())
-        
+
         self.editor_container = tk.Frame(self.editor_area, bg=VSColorScheme.BG_DARK)
+        self.editor_container.pack(fill=tk.BOTH, expand=True)
+
         editor_inner = tk.Frame(self.editor_container, bg=VSColorScheme.BG_DARK)
         editor_inner.pack(fill=tk.BOTH, expand=True)
-        self.line_numbers = LineNumbers(editor_inner, None)
+
+        # Номера строк
+        self.line_numbers = LineNumbers(editor_inner, None, app=self)
         self.line_numbers.pack(side=tk.LEFT, fill=tk.Y)
-        
+
+        # Редактор
         self.editor = tk.Text(
             editor_inner,
             wrap=tk.WORD if self.config.get("word_wrap", False) else tk.NONE,
@@ -2768,8 +3104,12 @@ class CodeEditorApp:
             tabs=(self.config["tab_size"] * 10,)
         )
         self.editor.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Привязываем line_numbers к редактору
         self.line_numbers.text_widget = self.editor
-        
+        self.line_numbers.update_numbers()
+
+        # Скроллбар
         self.editor_scrollbar = tk.Scrollbar(
             editor_inner,
             orient=tk.VERTICAL,
@@ -2780,18 +3120,26 @@ class CodeEditorApp:
         )
         self.editor_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.editor.config(yscrollcommand=self.on_editor_scrollbar_move)
-        
+
+        # Мини-карта
         if self.config.get("minimap_enabled", True):
             self.minimap = Minimap(editor_inner, self.editor)
             self.minimap.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
+        # События
         self.editor.bind('<KeyRelease>', self.on_key_release)
         self.editor.bind('<<Modified>>', self.on_text_modified)
         self.editor.bind('<MouseWheel>', self.on_editor_wheel)
         self.editor.bind('<Button-3>', self.show_editor_context_menu)
         self.editor_scrollbar.bind('<B1-Motion>', self.on_scroll)
-        
+
+        # Подсветка синтаксиса
         self.highlighter = SyntaxHighlighter(self.editor)
+
+        # Линтер (проверка Python)
+        self.linter = Linter(self.editor, self)
+
+        # ВНИМАНИЕ: welcome_screen создаётся в _create_widgets, НЕ создаём его здесь!
     
     def _create_console_area(self):
         self.console_area = tk.Frame(self.center_paned, bg=VSColorScheme.BG_DARK)
@@ -3015,6 +3363,177 @@ class FindDialog:
         self.app._dialog_open = False
         if self.dialog and self.dialog.winfo_exists():
             self.dialog.destroy()
+
+class Linter:
+    def __init__(self, text_widget, app):
+        self.text = text_widget
+        self.app = app
+        self.messages = []
+        self.ignored_messages = set()
+        self.running = False
+        self.after_id = None
+        self._load_ignored()
+
+    def _load_ignored(self):
+        if self.app.current_project:
+            ignored = self.app.current_project.state.get('ignored_lint', [])
+            self.ignored_messages = set(tuple(x) for x in ignored)
+
+    def _save_ignored(self):
+        if self.app.current_project:
+            self.app.current_project.state['ignored_lint'] = [list(x) for x in self.ignored_messages]
+            self.app.current_project.save_state()
+
+    def schedule_lint(self, delay=800):
+        if self.after_id:
+            self.app.root.after_cancel(self.after_id)
+        self.after_id = self.app.root.after(delay, self._start_lint)
+
+    def _start_lint(self):
+        if self.running:
+            return
+        self.running = True
+        threading.Thread(target=self._lint_thread, daemon=True).start()
+
+    def _lint_thread(self):
+        try:
+            code = self.text.get("1.0", tk.END)
+            messages = []
+
+            # pyflakes
+            if pyflakes is not None:
+                try:
+                    import sys
+                    from io import StringIO
+                    import contextlib
+                    with contextlib.redirect_stdout(StringIO()) as output:
+                        pyflakes.api.check(code, filename='<string>')
+                        output_text = output.getvalue()
+                    for line in output_text.splitlines():
+                        if not line.strip():
+                            continue
+                        parts = line.split(':', 3)
+                        if len(parts) >= 4:
+                            try:
+                                line_num = int(parts[1])
+                                col = int(parts[2])
+                                msg = parts[3].strip()
+                                code_match = re.search(r'([A-Z]\d+)\s+(.*)', msg)
+                                if code_match:
+                                    code_str = code_match.group(1)
+                                    msg_text = code_match.group(2)
+                                else:
+                                    code_str = 'F?'
+                                    msg_text = msg
+                                messages.append(LintMessage(
+                                    line=line_num,
+                                    column=col,
+                                    message=msg_text,
+                                    code=code_str,
+                                    level='warning',
+                                    source='pyflakes'
+                                ))
+                            except:
+                                pass
+                except Exception:
+                    pass
+
+            # pycodestyle
+            if pycodestyle is not None:
+                try:
+                    import tempfile
+                    import sys
+                    from io import StringIO
+                    import contextlib
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+                        f.write(code)
+                        tmpname = f.name
+                    with contextlib.redirect_stdout(StringIO()) as output:
+                        style_guide = pycodestyle.StyleGuide()
+                        style_guide.check_files([tmpname])
+                        output_text = output.getvalue()
+                    os.unlink(tmpname)
+                    ignored_codes = {'E501', 'E225', 'E302', 'E303'}  # настройте под себя
+                    for line in output_text.splitlines():
+                        if not line.strip():
+                            continue
+                        parts = line.split(':', 3)
+                        if len(parts) >= 4:
+                            try:
+                                line_num = int(parts[1])
+                                col = int(parts[2])
+                                rest = parts[3].strip()
+                                code_match = re.match(r'([A-Z]\d+)\s+(.*)', rest)
+                                if code_match:
+                                    code_str = code_match.group(1)
+                                    msg_text = code_match.group(2)
+                                else:
+                                    code_str = 'E?'
+                                    msg_text = rest
+                                if code_str in ignored_codes:
+                                    continue
+                                messages.append(LintMessage(
+                                    line=line_num,
+                                    column=col,
+                                    message=msg_text,
+                                    code=code_str,
+                                    level='warning',
+                                    source='pep8'
+                                ))
+                            except:
+                                pass
+                except Exception:
+                    pass
+
+            # Фильтруем игнорируемые
+            filtered = []
+            for msg in messages:
+                key = (msg.code, msg.line, msg.message)
+                if key not in self.ignored_messages:
+                    filtered.append(msg)
+
+            # Применяем результаты в главном потоке
+            self.app.root.after(0, self._apply_lint_results, filtered)
+        except Exception as e:
+            print(f"Lint thread error: {e}")
+        finally:
+            self.running = False
+
+    def _apply_lint_results(self, messages):
+        # Отладка: выводим количество сообщений (можно закомментировать)
+        # print(f"Applying {len(messages)} lint messages")
+        self.text.tag_remove("lint_error", "1.0", tk.END)
+        self.text.tag_remove("lint_warning", "1.0", tk.END)
+
+        self.messages = messages
+        for msg in messages:
+            line_start = f"{msg.line}.0"
+            line_end = f"{msg.line}.end"
+            tag = "lint_error" if msg.level == 'error' else "lint_warning"
+            self.text.tag_add(tag, line_start, line_end)
+
+        # Настройка тегов (underline вместо цвета фона)
+        self.text.tag_config("lint_error", underline=True, foreground="red")
+        self.text.tag_config("lint_warning", underline=True, foreground="orange")
+
+        # Обновляем номера строк для отображения маркеров
+        if self.app.line_numbers:
+            self.app.line_numbers.update_numbers()
+
+        errors = len([m for m in messages if m.level == 'error'])
+        warnings = len([m for m in messages if m.level == 'warning'])
+        self.app.status_label.config(text=f"Ошибок: {errors}, Предупреждений: {warnings}")
+
+    def get_messages_at_line(self, line):
+        if not self.messages:
+            return []
+        return [m for m in self.messages if m.line == line]
+
+    def ignore_message(self, msg: LintMessage):
+        key = (msg.code, msg.line, msg.message)
+        self.ignored_messages.add(key)
+        self._save_ignored()
+        self._start_lint()
 
 if __name__ == "__main__":
     root = tk.Tk()

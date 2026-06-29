@@ -3,7 +3,7 @@
 
 [Setup]
 AppName=RealCode
-AppVersion=3.5
+AppVersion=3.6b
 AppPublisher=K1sh-M1sh
 DefaultDirName={pf}\RealCode
 DefaultGroupName=RealCode
@@ -12,62 +12,66 @@ Compression=lzma2
 SolidCompression=yes
 OutputDir=.
 OutputBaseFilename=RealCode_Install
-; Требуем права администратора для записи в реестр
 PrivilegesRequired=admin
+
+[Tasks]
+Name: "associatepy"; Description: "Добавить поддержку .py файлы с RealCode"; GroupDescription: "Ассоциации файлов:"; Flags: unchecked
+Name: "associatecpp"; Description: "Добавить поддержку .cpp файлы с RealCode"; GroupDescription: "Ассоциации файлов:"; Flags: unchecked
+Name: "associatec"; Description: "Добавить поддержку .c файлы с RealCode"; GroupDescription: "Ассоциации файлов:"; Flags: unchecked
+Name: "associateh"; Description: "Добавить поддержку .h файлы с RealCode"; GroupDescription: "Ассоциации файлов:"; Flags: unchecked
+Name: "associatehpp"; Description: "Добавить поддержку .hpp файлы с RealCode"; GroupDescription: "Ассоциации файлов:"; Flags: unchecked
+Name: "associatecs"; Description: "Добавить поддержку .cs файлы с RealCode"; GroupDescription: "Ассоциации файлов:"; Flags: unchecked
+Name: "associatesln"; Description: "Добавить поддержку .sln файлы с RealCode"; GroupDescription: "Ассоциации файлов:"; Flags: unchecked
 
 [Files]
 Source: "E:\RealCode\dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-; Ярлык в меню Пуск
 Name: "{group}\RealCode"; Filename: "{app}\RealCode.exe"; WorkingDir: "{app}"
-; Ярлык на рабочем столе
 Name: "{commondesktop}\RealCode"; Filename: "{app}\RealCode.exe"; WorkingDir: "{app}"
 
 [Registry]
-; --- Python (используем существующий класс, как у вас) ---
-Root: HKCR; Subkey: "Python.File\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "Python.File\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey
+; --- Регистрация приложения в списке "Открыть с помощью" ---
+Root: HKCR; Subkey: "Applications\RealCode.exe\SupportedTypes"; ValueType: string; ValueName: ".py"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "Applications\RealCode.exe\SupportedTypes"; ValueType: string; ValueName: ".cpp"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "Applications\RealCode.exe\SupportedTypes"; ValueType: string; ValueName: ".c"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "Applications\RealCode.exe\SupportedTypes"; ValueType: string; ValueName: ".h"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "Applications\RealCode.exe\SupportedTypes"; ValueType: string; ValueName: ".hpp"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "Applications\RealCode.exe\SupportedTypes"; ValueType: string; ValueName: ".cs"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCR; Subkey: "Applications\RealCode.exe\SupportedTypes"; ValueType: string; ValueName: ".sln"; ValueData: ""; Flags: uninsdeletekey
 
-; --- Для .cpp ---
-Root: HKCR; Subkey: "SystemFileAssociations\.cpp\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "SystemFileAssociations\.cpp\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey
+; --- Python ---
+Root: HKCR; Subkey: "Python.File\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey; Tasks: associatepy
+Root: HKCR; Subkey: "Python.File\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: associatepy
+; (Опционально) иконка для .py
+; Root: HKCR; Subkey: "Python.File\DefaultIcon"; ValueType: string; ValueData: "{app}\realcode.ico"; Flags: uninsdeletekey; Tasks: associatepy
 
-; --- Для .c ---
-Root: HKCR; Subkey: "SystemFileAssociations\.c\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "SystemFileAssociations\.c\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey
+; --- .cpp ---
+Root: HKCR; Subkey: "SystemFileAssociations\.cpp\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey; Tasks: associatecpp
+Root: HKCR; Subkey: "SystemFileAssociations\.cpp\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: associatecpp
 
-; --- Для .h ---
-Root: HKCR; Subkey: "SystemFileAssociations\.h\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "SystemFileAssociations\.h\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey
+; --- .c ---
+Root: HKCR; Subkey: "SystemFileAssociations\.c\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey; Tasks: associatec
+Root: HKCR; Subkey: "SystemFileAssociations\.c\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: associatec
 
-; --- Для .hpp ---
-Root: HKCR; Subkey: "SystemFileAssociations\.hpp\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "SystemFileAssociations\.hpp\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey
+; --- .h ---
+Root: HKCR; Subkey: "SystemFileAssociations\.h\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey; Tasks: associateh
+Root: HKCR; Subkey: "SystemFileAssociations\.h\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: associateh
 
-; --- Для .cs ---
-Root: HKCR; Subkey: "SystemFileAssociations\.cs\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "SystemFileAssociations\.cs\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey
+; --- .hpp ---
+Root: HKCR; Subkey: "SystemFileAssociations\.hpp\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey; Tasks: associatehpp
+Root: HKCR; Subkey: "SystemFileAssociations\.hpp\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: associatehpp
 
-; --- Для .sln ---
-Root: HKCR; Subkey: "SystemFileAssociations\.sln\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "SystemFileAssociations\.sln\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey
+; --- .cs ---
+Root: HKCR; Subkey: "SystemFileAssociations\.cs\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey; Tasks: associatecs
+Root: HKCR; Subkey: "SystemFileAssociations\.cs\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: associatecs
 
-
-; Если вы используете не скомпилированный .exe, а запуск через python.exe, замените команду:
-; ValueData: """{sys}\python.exe"" ""{app}\main.py"" ""%1"""
-
-; (Опционально) Ассоциация .rcp файлов с RealCode (если есть такой формат)
-; Root: HKCR; Subkey: ".rcp"; ValueType: string; ValueName: ""; ValueData: "RealCode.Project"; Flags: uninsdeletekey
-; Root: HKCR; Subkey: "RealCode.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey
-
-; Добавляем иконку для .py файлов (если у вас есть иконка в ресурсах)
-; Root: HKCR; Subkey: "Python.File\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\realcode.ico"; Flags: uninsdeletekey
+; --- .sln ---
+Root: HKCR; Subkey: "SystemFileAssociations\.sln\shell\Open with RealCode"; ValueType: string; ValueData: "Open With RealCode"; Flags: uninsdeletekey; Tasks: associatesln
+Root: HKCR; Subkey: "SystemFileAssociations\.sln\shell\Open with RealCode\command"; ValueType: string; ValueData: """{app}\RealCode.exe"" ""%1"""; Flags: uninsdeletekey; Tasks: associatesln
 
 [Run]
-; Запуск RealCode после установки (опционально)
 Filename: "{app}\RealCode.exe"; Description: "Запустить RealCode"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
-; Удаляем папку при деинсталляции (все файлы будут удалены автоматически)
 Type: filesandordirs; Name: "{app}"

@@ -219,12 +219,12 @@ VSVersionInfo(
         u'040904B0',
         [StringStruct(u'CompanyName', u'K1sh-M1sh'),
         StringStruct(u'FileDescription', u'RealCode for Scripting'),
-        StringStruct(u'FileVersion', u'3.5.0'),
+        StringStruct(u'FileVersion', u'3.6.0'),
         StringStruct(u'InternalName', u'RealCode'),
-        StringStruct(u'LegalCopyright', u'(C) 2026 K1sh-M1sh'),
+        StringStruct(u'LegalCopyright', u'MIT'),
         StringStruct(u'OriginalFilename', u'RealCode.exe'),
         StringStruct(u'ProductName', u'RealCode'),
-        StringStruct(u'ProductVersion', u'3.5.0'),
+        StringStruct(u'ProductVersion', u'3.6.0'),
         StringStruct(u'Comments', u'RealCode for Scripting')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [0x0409, 0x04B0])])
