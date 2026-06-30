@@ -3,7 +3,7 @@
 
 [Setup]
 AppName=RealCode
-AppVersion=3.6b
+AppVersion=3.6
 AppPublisher=K1sh-M1sh
 DefaultDirName={pf}\RealCode
 DefaultGroupName=RealCode

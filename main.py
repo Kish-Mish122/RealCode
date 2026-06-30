@@ -15,6 +15,7 @@ import time
 from PIL import Image, ImageTk
 import pyflakes.api
 import pycodestyle
+import tempfile
 import threading
 import queue
 from dataclasses import dataclass
@@ -1365,7 +1366,7 @@ class DiscordPresence:
             return
         try:
             filename, file_type = self._get_file_info()
-            project_name = "Нет проекта" if not self.app.current_project else self.app.current_project.name
+            project_name = "Безымянный проект" if not self.app.current_project else self.app.current_project.name
             files_count = len(self.app.current_project.tabs) if self.app.current_project else 0
             state_text = {
                 "editing": "Редактирует код",
@@ -1375,7 +1376,7 @@ class DiscordPresence:
             details = f"{filename} • {project_name}"
             buttons = [
                 {"label": "RealCode in GitHub", "url": "https://github.com/Kish-Mish122/RealCode"},
-                {"label": "Download RealCode", "url": "https://github.com/Kish-Mish122/RealCode/releases"},
+                {"label": "Download RealCode", "url": "https://github.com/Kish-Mish122/RealCode/releases/latest"},
             ]
             self.rpc.update(
                 state=state_text,
@@ -1427,7 +1428,7 @@ class UpdateChecker:
                 }
             )
 
-            print("🔍 Проверка обновлений")
+            print("🔍 Просмотр обновлений...")
 
             with urllib.request.urlopen(req, context=context, timeout=5) as response:
                 data = response.read().decode('utf-8')
@@ -1470,13 +1471,13 @@ class UpdateChecker:
             }
 
             if self.update_available:
-                print(f"✅ Найдено обновление! {current} -> {latest}")
+                print(f"✅ Пора обновляться! {current} -> {latest}")
                 if not silent:
                     self.app.root.after(0, self._show_update_dialog)
                 return True
             else:
                 if not silent:
-                    self.app.log("✅ RealCode актуален")
+                    self.app.log("✅ RealCode новой версии")
                 return False
 
         except Exception as e:
@@ -1491,7 +1492,7 @@ class UpdateChecker:
             return
 
         self.update_dialog = tk.Toplevel(self.app.root)
-        self.update_dialog.title("Новая версия RealCode")
+        self.update_dialog.title("Не хотите обновить RealCode?")
         self.update_dialog.geometry("650x540")
         self.update_dialog.configure(bg=VSColorScheme.BG_MEDIUM)
         self.update_dialog.transient(self.app.root)
@@ -1546,7 +1547,7 @@ class UpdateChecker:
                  fg=VSColorScheme.ACCENT, font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT)
 
         message_text = self.update_info.get('update_message',
-            f"Доступна новая версия RealCode {latest_version} с улучшениями!")
+            f"Новая версия RealCode {latest_version} с улучшениями и исправлениями извесных багов!")
         message_label = tk.Label(
             self.update_dialog,
             text=message_text,
@@ -1561,7 +1562,7 @@ class UpdateChecker:
         if 'release_notes' in self.update_info:
             notes_frame = tk.Frame(self.update_dialog, bg=VSColorScheme.BG_LIGHT, padx=15, pady=15)
             notes_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=10)
-            notes_title = tk.Label(notes_frame, text="Что нового:", bg=VSColorScheme.BG_LIGHT,
+            notes_title = tk.Label(notes_frame, text="Что обновилось:", bg=VSColorScheme.BG_LIGHT,
                                    fg=VSColorScheme.FG, font=("Segoe UI", 11, "bold"))
             notes_title.pack(anchor="w", pady=(0, 5))
             notes_text = tk.Text(notes_frame, height=6, bg=VSColorScheme.BG_LIGHT,
@@ -1584,7 +1585,7 @@ class UpdateChecker:
         btn_frame = tk.Frame(self.update_dialog, bg=VSColorScheme.BG_MEDIUM)
         btn_frame.pack(pady=20)
 
-        update_btn = tk.Button(btn_frame, text="⬇Обновиться", command=self._start_update,
+        update_btn = tk.Button(btn_frame, text="Обновиться", command=self._start_update,
                                bg=VSColorScheme.ACCENT, fg="white", relief=tk.FLAT,
                                padx=25, pady=8, font=("Segoe UI", 11, "bold"), cursor="hand2")
         update_btn.pack(side=tk.LEFT, padx=10)
@@ -1594,7 +1595,7 @@ class UpdateChecker:
                               padx=25, pady=8, font=("Segoe UI", 11), cursor="hand2")
         later_btn.pack(side=tk.LEFT, padx=10)
 
-        warning_label = tk.Label(self.update_dialog, text="При закрытии RealCode он будет обновлён",
+        warning_label = tk.Label(self.update_dialog, text="При завершении работы RealCode будет обновлен",
                                  bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.PINNED,
                                  font=("Segoe UI", 9, "italic"))
         warning_label.pack(pady=(10, 5))
@@ -1615,7 +1616,7 @@ class UpdateChecker:
                     pass
 
         self.progress_frame.pack(fill=tk.X, padx=30, pady=20)
-        self.status_label.config(text="Подготовка к скачиванию...")
+        self.status_label.config(text="Подготовка...")
         threading.Thread(target=self._download_and_install, daemon=True).start()
 
     def _download_and_install(self):
@@ -1633,7 +1634,7 @@ class UpdateChecker:
                 current_exe = os.path.abspath(__file__)
                 download_path = current_exe + ".new"
 
-            self._update_status("Скачивание обновления...", 10)
+            self._update_status("Загрузка в папку...", 10)
 
             import urllib.request
             import ssl
@@ -1649,10 +1650,10 @@ class UpdateChecker:
 
             # Проверяем, что файл скачался
             if not os.path.exists(download_path) or os.path.getsize(download_path) == 0:
-                self._show_error("Скачанный файл повреждён или пуст")
+                self._show_error("Скаченый файл был поврежден или он пустой...")
                 return
 
-            self._update_status("Установка обновления...", 100)
+            self._update_status("Загрузка обновления...", 100)
             time.sleep(0.5)
 
             if getattr(sys, 'frozen', False):
@@ -1686,14 +1687,14 @@ del /f /q "%~f0"
 """)
 
         self.update_dialog.after(0, self.update_dialog.destroy)
-        response = messagebox.askyesno("Обновление готово",
-                                       "Обновление успешно скачано! Перезапустить RealCode сейчас?")
+        response = messagebox.askyesno("Обновление было загружено!",
+                                       "Обновление было загружено успешно! Хотите закончить установку RealCode?")
         if response:
             self.update_dialog.after(100, lambda: os.startfile(bat_path))
             self.app.root.after(100, self.app.on_closing)
         else:
-            messagebox.showinfo("Обновление запланировано",
-                                "Обновление будет установлено при следующем запуске.")
+            messagebox.showinfo("Обновление перенесено...",
+                                "Обновление будет окончательно загружено при повторном запуске программы.")
 
     def _update_progress(self, value):
         if self.progress_bar:
@@ -1974,9 +1975,6 @@ class CodeEditorApp:
             self.editor.mark_set(tk.INSERT, "1.0")
             self.editor.see("1.0")
 
-        if self._is_python_file(tab) and self.linter is not None:
-            self.linter.schedule_lint(1000)
-
             # === ПОДСВЕТКА ===
         if self.config.get("syntax_highlight", True) and self.highlighter:
             filename = self.current_project.files.get(tab)
@@ -2004,6 +2002,9 @@ class CodeEditorApp:
         if self.discord:
             self.discord._update_presence()
         self.current_project.save_state()
+
+        if self.linter is not None:
+            self.linter.schedule_lint(500)
     
     def _close_tab(self, tab):
         if not self.current_project or tab not in self.current_project.tabs:
@@ -2230,10 +2231,6 @@ class CodeEditorApp:
             self.root.after_cancel(self._line_numbers_after_id)
         self._line_numbers_after_id = self.root.after(200, self._update_line_numbers_delayed)
 
-        if self.config.get("syntax_highlight", True) and self._is_python_file(self.current_project.current_tab):
-            if self.linter is not None:
-                self.linter.schedule_lint(800)
-
         # Подсветка синтаксиса
         if self.config.get("syntax_highlight", True) and self.highlighter:
             file_size = self.highlighter.get_file_size()
@@ -2265,6 +2262,9 @@ class CodeEditorApp:
             if self._minimap_after_id:
                 self.root.after_cancel(self._minimap_after_id)
             self._minimap_after_id = self.root.after(500, self._update_minimap_delayed)
+
+        if self.config.get("syntax_highlight", True) and self.linter is not None:
+            self.linter.schedule_lint(800)
 
     def _update_line_numbers_delayed(self):
         if self.line_numbers and self.line_numbers.winfo_exists():
@@ -2368,7 +2368,7 @@ class CodeEditorApp:
                 if messages:
                     menu.add_separator()
                     submenu = tk.Menu(menu, tearoff=0)
-                    menu.add_cascade(label="⚠️ Предупреждения", menu=submenu)
+                    menu.add_cascade(label="Предупреждения", menu=submenu)
                     for msg in messages[:5]:  # показываем не более 5
                         text = f"{msg.code}: {msg.message[:50]}"
                         submenu.add_command(
@@ -2819,7 +2819,7 @@ class CodeEditorApp:
         
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Справка", menu=help_menu)
-        help_menu.add_command(label="🔄 Проверить обновления", command=self.manual_check_updates)
+        help_menu.add_command(label="Проверить обновления", command=self.manual_check_updates)
         help_menu.add_command(label="О программе", command=self.show_about)
     
     # ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ
@@ -3400,108 +3400,318 @@ class Linter:
             code = self.text.get("1.0", tk.END)
             messages = []
 
-            # pyflakes
-            if pyflakes is not None:
-                try:
-                    import sys
-                    from io import StringIO
-                    import contextlib
-                    with contextlib.redirect_stdout(StringIO()) as output:
-                        pyflakes.api.check(code, filename='<string>')
-                        output_text = output.getvalue()
-                    for line in output_text.splitlines():
-                        if not line.strip():
-                            continue
-                        parts = line.split(':', 3)
-                        if len(parts) >= 4:
-                            try:
-                                line_num = int(parts[1])
-                                col = int(parts[2])
-                                msg = parts[3].strip()
-                                code_match = re.search(r'([A-Z]\d+)\s+(.*)', msg)
-                                if code_match:
-                                    code_str = code_match.group(1)
-                                    msg_text = code_match.group(2)
-                                else:
-                                    code_str = 'F?'
-                                    msg_text = msg
-                                messages.append(LintMessage(
-                                    line=line_num,
-                                    column=col,
-                                    message=msg_text,
-                                    code=code_str,
-                                    level='warning',
-                                    source='pyflakes'
-                                ))
-                            except:
-                                pass
-                except Exception:
-                    pass
+            # Определяем язык
+            lang = 'python'
+            if self.app.current_project and self.app.current_project.current_tab:
+                filename = self.app.current_project.files.get(self.app.current_project.current_tab)
+                if filename:
+                    ext = os.path.splitext(filename)[1].lower()
+                    ext_map = {
+                        '.py': 'python',
+                        '.c': 'c',
+                        '.cpp': 'cpp',
+                        '.cxx': 'cpp',
+                        '.cc': 'cpp',
+                        '.cs': 'csharp',
+                        '.hc': 'holyc',
+                        '.holyc': 'holyc'
+                    }
+                    lang = ext_map.get(ext, 'python')
 
-            # pycodestyle
-            if pycodestyle is not None:
-                try:
-                    import tempfile
-                    import sys
-                    from io import StringIO
-                    import contextlib
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
-                        f.write(code)
-                        tmpname = f.name
-                    with contextlib.redirect_stdout(StringIO()) as output:
-                        style_guide = pycodestyle.StyleGuide()
-                        style_guide.check_files([tmpname])
-                        output_text = output.getvalue()
-                    os.unlink(tmpname)
-                    ignored_codes = {'E501', 'E225', 'E302', 'E303'}  # настройте под себя
-                    for line in output_text.splitlines():
-                        if not line.strip():
-                            continue
-                        parts = line.split(':', 3)
-                        if len(parts) >= 4:
-                            try:
-                                line_num = int(parts[1])
-                                col = int(parts[2])
-                                rest = parts[3].strip()
-                                code_match = re.match(r'([A-Z]\d+)\s+(.*)', rest)
-                                if code_match:
-                                    code_str = code_match.group(1)
-                                    msg_text = code_match.group(2)
-                                else:
-                                    code_str = 'E?'
-                                    msg_text = rest
-                                if code_str in ignored_codes:
-                                    continue
-                                messages.append(LintMessage(
-                                    line=line_num,
-                                    column=col,
-                                    message=msg_text,
-                                    code=code_str,
-                                    level='warning',
-                                    source='pep8'
-                                ))
-                            except:
-                                pass
-                except Exception:
-                    pass
+            if lang == 'python':
+                messages = self._lint_python(code)
+            elif lang in ('c', 'cpp'):
+                messages = self._lint_with_clang(code, lang)
+            elif lang == 'csharp':
+                messages = self._lint_with_csc(code)
+            elif lang == 'holyc':
+                messages = self._lint_holyc_basic(code)
 
-            # Фильтруем игнорируемые
+            # Фильтр игнорируемых
             filtered = []
             for msg in messages:
                 key = (msg.code, msg.line, msg.message)
                 if key not in self.ignored_messages:
                     filtered.append(msg)
 
-            # Применяем результаты в главном потоке
             self.app.root.after(0, self._apply_lint_results, filtered)
         except Exception as e:
             print(f"Lint thread error: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             self.running = False
 
+    # ---------- Python (pyflakes + pycodestyle) ----------
+    def _lint_python(self, code):
+        messages = []
+        # pyflakes
+        if pyflakes is not None:
+            try:
+                import sys
+                from io import StringIO
+                import contextlib
+                with contextlib.redirect_stdout(StringIO()) as output:
+                    pyflakes.api.check(code, filename='<string>')
+                    output_text = output.getvalue()
+                for line in output_text.splitlines():
+                    if not line.strip():
+                        continue
+                    parts = line.split(':', 3)
+                    if len(parts) >= 4:
+                        try:
+                            line_num = int(parts[1])
+                            col = int(parts[2])
+                            msg = parts[3].strip()
+                            code_match = re.search(r'([A-Z]\d+)\s+(.*)', msg)
+                            if code_match:
+                                code_str = code_match.group(1)
+                                msg_text = code_match.group(2)
+                            else:
+                                code_str = 'F?'
+                                msg_text = msg
+                            messages.append(LintMessage(
+                                line=line_num, column=col, message=msg_text,
+                                code=code_str, level='warning', source='pyflakes'
+                            ))
+                        except:
+                            pass
+            except Exception:
+                pass
+
+        # pycodestyle
+        if pycodestyle is not None:
+            try:
+                import tempfile
+                import sys
+                from io import StringIO
+                import contextlib
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+                    f.write(code)
+                    tmpname = f.name
+                with contextlib.redirect_stdout(StringIO()) as output:
+                    style_guide = pycodestyle.StyleGuide()
+                    style_guide.check_files([tmpname])
+                    output_text = output.getvalue()
+                os.unlink(tmpname)
+                ignored_codes = {'E501', 'E225', 'E302', 'E303'}  # можно настроить
+                for line in output_text.splitlines():
+                    if not line.strip():
+                        continue
+                    parts = line.split(':', 3)
+                    if len(parts) >= 4:
+                        try:
+                            line_num = int(parts[1])
+                            col = int(parts[2])
+                            rest = parts[3].strip()
+                            code_match = re.match(r'([A-Z]\d+)\s+(.*)', rest)
+                            if code_match:
+                                code_str = code_match.group(1)
+                                msg_text = code_match.group(2)
+                            else:
+                                code_str = 'E?'
+                                msg_text = rest
+                            if code_str in ignored_codes:
+                                continue
+                            messages.append(LintMessage(
+                                line=line_num, column=col, message=msg_text,
+                                code=code_str, level='warning', source='pep8'
+                            ))
+                        except:
+                            pass
+            except Exception:
+                pass
+        return messages
+
+    # ---------- Clang для C/C++ ----------
+    def _lint_with_clang(self, code, lang):
+        messages = []
+        tmpname = None
+        try:
+            import tempfile, subprocess, os, re
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.cpp', delete=False, encoding='utf-8') as f:
+                f.write(code)
+                tmpname = f.name
+
+            lang_flag = '-x c' if lang == 'c' else '-x c++'
+            cmd = ['clang', '-fsyntax-only', '-fno-caret-diagnostics', lang_flag, tmpname]
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+            for line in result.stderr.splitlines():
+                match = re.match(r'.+?:(\d+):(\d+):\s*(error|warning):\s*(.*)', line)
+                if match:
+                    line_num = int(match.group(1))
+                    col = int(match.group(2))
+                    level = match.group(3)
+                    msg = match.group(4)
+                    code_match = re.search(r'\[(.*?)\]', msg)
+                    code_str = code_match.group(1) if code_match else 'C?'
+                    messages.append(LintMessage(
+                        line=line_num, column=col, message=msg.strip(),
+                        code=code_str, level='error' if level == 'error' else 'warning',
+                        source='clang'
+                    ))
+        except FileNotFoundError:
+            self.app.log("⚠️ Clang не установлен. Установите LLVM.")
+        except Exception as e:
+            self.app.log(f"⚠️ Clang ошибка: {e}")
+        finally:
+            if tmpname and os.path.exists(tmpname):
+                os.unlink(tmpname)
+        return messages
+
+    # ---------- C# через csc.exe ----------
+    def _lint_with_csc(self, code):
+        messages = []
+        tmpname = None
+        try:
+            import tempfile, subprocess, os, re, shutil, glob
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.cs', delete=False, encoding='utf-8') as f:
+                f.write(code)
+                tmpname = f.name
+
+            csc_path = self._find_csc()
+            if not csc_path:
+                self.app.log("⚠️ C# компилятор не найден. Установите .NET SDK.")
+                return []
+
+            # Запускаем с кодировкой OEM (cp866) для русского вывода
+            cmd = [csc_path, '/nologo', '/target:module', '/nowarn:1701,1702', tmpname]
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='cp866', errors='ignore')
+            
+            # Используем stderr, если есть, иначе stdout
+            output = result.stderr if result.stderr else result.stdout
+            if not output:
+                return messages  # нет вывода — нет ошибок
+
+            for line in output.splitlines():
+                # Формат: filename(line,col): error/warning CSxxxx: message
+                match = re.match(r'.+?\((\d+),(\d+)\):\s*(error|warning)\s+(\w+):\s*(.*)', line)
+                if match:
+                    line_num = int(match.group(1))
+                    col = int(match.group(2))
+                    level = match.group(3)
+                    code_str = match.group(4)
+                    msg = match.group(5)
+                    messages.append(LintMessage(
+                        line=line_num,
+                        column=col,
+                        message=msg.strip(),
+                        code=code_str,
+                        level='error' if level == 'error' else 'warning',
+                        source='csc'
+                    ))
+        except Exception as e:
+            self.app.log(f"⚠️ C# ошибка: {e}")
+        finally:
+            if tmpname and os.path.exists(tmpname):
+                os.unlink(tmpname)
+        return messages
+
+    def _find_csc(self):
+        import shutil, glob, os
+        
+        # 1. Проверяем PATH
+        csc = shutil.which('csc.exe')
+        if csc:
+            return csc
+        
+        # 2. .NET Framework
+        base_paths = [
+            r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319",
+            r"C:\Windows\Microsoft.NET\Framework\v4.0.30319",
+        ]
+        for path in base_paths:
+            candidate = os.path.join(path, 'csc.exe')
+            if os.path.exists(candidate):
+                return candidate
+        
+        # 3. .NET SDK через DOTNET_ROOT
+        dotnet_root = os.environ.get('DOTNET_ROOT')
+        if dotnet_root:
+            sdk_path = os.path.join(dotnet_root, 'sdk')
+            if os.path.exists(sdk_path):
+                for sdk_dir in glob.glob(os.path.join(sdk_path, '*')):
+                    roslyn = os.path.join(sdk_dir, 'Roslyn', 'bincore', 'csc.exe')
+                    if os.path.exists(roslyn):
+                        return roslyn
+                    roslyn2 = os.path.join(sdk_dir, 'Roslyn', 'bin', 'csc.exe')
+                    if os.path.exists(roslyn2):
+                        return roslyn2
+        
+        # 4. Visual Studio
+        vs_paths = [
+            r"C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\Roslyn\csc.exe",
+            r"C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\Roslyn\csc.exe",
+            r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\Roslyn\csc.exe",
+        ]
+        for path in vs_paths:
+            if os.path.exists(path):
+                return path
+        
+        return None
+
+    # ---------- HolyC базовая проверка ----------
+    def _lint_holyc_basic(self, code):
+        messages = []
+        lines = code.splitlines()
+        open_braces = open_parens = open_brackets = 0
+        in_string = in_comment = False
+
+        for i, line in enumerate(lines, start=1):
+            j = 0
+            while j < len(line):
+                ch = line[j]
+                if in_comment:
+                    if ch == '*' and j+1 < len(line) and line[j+1] == '/':
+                        in_comment = False
+                        j += 2
+                        continue
+                    j += 1
+                    continue
+                if ch == '/' and j+1 < len(line):
+                    if line[j+1] == '/':
+                        break
+                    if line[j+1] == '*':
+                        in_comment = True
+                        j += 2
+                        continue
+                if in_string:
+                    if ch == '"' and (j == 0 or line[j-1] != '\\'):
+                        in_string = False
+                    j += 1
+                    continue
+                if ch == '"':
+                    in_string = True
+                    j += 1
+                    continue
+                if ch == '{': open_braces += 1
+                elif ch == '}': open_braces -= 1
+                elif ch == '(': open_parens += 1
+                elif ch == ')': open_parens -= 1
+                elif ch == '[': open_brackets += 1
+                elif ch == ']': open_brackets -= 1
+                j += 1
+
+            stripped = line.strip()
+            if stripped and not stripped.endswith(';') and not stripped.endswith('{') and not stripped.endswith('}'):
+                if not (stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*') or stripped.startswith('#')):
+                    messages.append(LintMessage(
+                        line=i, column=len(line)+1,
+                        message="Возможно, отсутствует точка с запятой",
+                        code='H004', level='warning', source='holyc'
+                    ))
+
+        if open_braces != 0:
+            messages.append(LintMessage(1,1,f"Несбалансированные фигурные скобки: {open_braces}",'H001','error','holyc'))
+        if open_parens != 0:
+            messages.append(LintMessage(1,1,f"Несбалансированные круглые скобки: {open_parens}",'H002','error','holyc'))
+        if open_brackets != 0:
+            messages.append(LintMessage(1,1,f"Несбалансированные квадратные скобки: {open_brackets}",'H003','error','holyc'))
+        return messages
+
+    # ---------- Применение результатов ----------
     def _apply_lint_results(self, messages):
-        # Отладка: выводим количество сообщений (можно закомментировать)
-        # print(f"Applying {len(messages)} lint messages")
         self.text.tag_remove("lint_error", "1.0", tk.END)
         self.text.tag_remove("lint_warning", "1.0", tk.END)
 
@@ -3512,11 +3722,9 @@ class Linter:
             tag = "lint_error" if msg.level == 'error' else "lint_warning"
             self.text.tag_add(tag, line_start, line_end)
 
-        # Настройка тегов (underline вместо цвета фона)
         self.text.tag_config("lint_error", underline=True, foreground="red")
         self.text.tag_config("lint_warning", underline=True, foreground="orange")
 
-        # Обновляем номера строк для отображения маркеров
         if self.app.line_numbers:
             self.app.line_numbers.update_numbers()
 
@@ -3529,7 +3737,7 @@ class Linter:
             return []
         return [m for m in self.messages if m.line == line]
 
-    def ignore_message(self, msg: LintMessage):
+    def ignore_message(self, msg):
         key = (msg.code, msg.line, msg.message)
         self.ignored_messages.add(key)
         self._save_ignored()

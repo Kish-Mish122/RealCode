@@ -1,5 +1,5 @@
 # RealCode — Легковесная IDE
-<img src="ImageForGitHub/Desktop_260628_1735.jpg" alt="desktop" height="1920">
+<img src="ImageForGitHub/Desktop_260628_1735.jpg" alt="desktop">
 
 ## В чем ее плюсы:
 1. Легкость -> Вместо 1 ГБ порой не нужной информации или лишних функций RealCode предлагает самый минимум для разработки.
