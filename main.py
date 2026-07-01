@@ -1,4 +1,6 @@
 # main.py - RealCode
+# Внимание! Данная версия - бета, тут могут быть не дороботки, баги, вылеты и другие ошибки, мещающие работе RealCode. Пожалуйста, если вы заметите какой-то либо баг в коде, не остовайтесь в стороне.
+# Помогите проекту стать лучше. Напишите на help.k1shm1sh@gmail.com с темой "Баги RealCode". Если баг будет существенный, то я вас добавлю как помощников в Справка->О программе.
 import site
 import subprocess
 import tkinter as tk
@@ -20,14 +22,24 @@ import threading
 import queue
 from dataclasses import dataclass
 from typing import List, Dict, Set
+import requests
+import threading
 
 from pyflakes import reporter
 from pyflakes.api import check
 from io import StringIO
+from packaging import version
+
+import zipfile
+import io
+import shutil
+from tkinter import ttk
+
+import importlib.util
 
 try:
     if sys.platform == "win32" and sys.stdout is not None:
-        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding='utf-8') # Это нужно для поддержки русского языка
 except (AttributeError, ValueError):
     pass
 
@@ -35,6 +47,7 @@ old_stdout = sys.stdout
 old_stderr = sys.stderr
 sys.stdout = StringIO()
 sys.stderr = StringIO()
+
 
 # Хардкорить токены, ID и другие важные данные, которые как бы нельзя вставлять просто в код - не лучшая идея. Поэтому, советую создать файл config.py и туда вставлять все то, что
 # важно для скрипта, но и важно для безопасности
@@ -46,6 +59,10 @@ from config import VERSION_REALCODE
 from config import DOWNLOAD_URL
 from config import GITHUB_VERSION_URL_CONFIG
 from config import GITHUB_TOKEN
+from config import FORMSPREE_ID
+from config import MIN_REALCODE_VERSION
+from config import GITHUB_VERSION_MIN
+from config import PLUGIN_URL_CONF
 
 DISCORD_ID = DISCORD_ID_CONFIG
 GITHUB_VERSION_URL = GITHUB_VERSION_URL_CONFIG
@@ -55,6 +72,8 @@ APP_NAME = "RealCode"
 VERSION = VERSION_REALCODE
 CONFIG_FILE = "settings.json"
 DISCORD_CLIENT_ID = DISCORD_ID
+
+MIN_REALCODE = MIN_REALCODE_VERSION
 
 @dataclass
 class LintMessage:
@@ -72,6 +91,30 @@ class StringIOReporter(reporter.Reporter):
         self.output.write(str(message) + "\n")
     def unexpectedError(self, filename, msg):
         self.output.write(f"{filename}: {msg}\n")
+
+def get_app_dir():
+    """Возвращает директорию, где находится исполняемый файл (или скрипт)."""
+    if getattr(sys, 'frozen', False):
+        # Запущено как .exe (PyInstaller)
+        return os.path.dirname(sys.executable)
+    else:
+        # Запущено как скрипт
+        return os.path.dirname(os.path.abspath(__file__))
+    
+def ensure_directories(app_dir):
+    """Создаёт все необходимые папки в директории приложения."""
+    dirs = [
+        'plugins'          # для плагинов
+    ]
+    for dir_name in dirs:
+        dir_path = os.path.join(app_dir, dir_name)
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+            print(f"Создана папка: {dir_path}")
+
+    # Также создаём системную папку .RLCode (она создаётся проектом, но для уверенности)
+    # Это может быть в проекте, но лучше создать в корне приложения (не обязательно)
+    # .RLCode создаётся внутри каждого проекта, так что здесь не нужно.
 
 
 class VSColorScheme:
@@ -401,8 +444,6 @@ class LineNumbers(tk.Canvas):
             total_lines = int(self.text_widget.index('end-1c').split('.')[0])
             first_line = int(self.text_widget.index("@0,0").split('.')[0])
             last_line = int(self.text_widget.index(f"@0,{self.text_widget.winfo_height()}").split('.')[0])
-            # Отладочный print теперь после объявления total_lines
-            # print("update_numbers called, total_lines:", total_lines)  # можно закомментировать или удалить
             for line_num in range(first_line, min(last_line + 1, total_lines + 1)):
                 dline_info = self.text_widget.dlineinfo(f"{line_num}.0")
                 if dline_info:
@@ -1375,8 +1416,10 @@ class DiscordPresence:
             }.get(self.current_state, "Редактирует код")
             details = f"{filename} • {project_name}"
             buttons = [
-                {"label": "RealCode in GitHub", "url": "https://github.com/Kish-Mish122/RealCode"},
-                {"label": "Download RealCode", "url": "https://github.com/Kish-Mish122/RealCode/releases/latest"},
+                {"label": "RealCode in GitLab", "url": "https://gitlab.com/K1sh-M1sh/RealCode"},
+                {"label": "Download RealCode", "url": "https://gitlab.com/K1sh-M1sh/RealCode/-/releases/"},
+			 {"label": "Following Creator on GitHub", "url": "https://github.com/Kish-Mish122"},
+			 {"label": "Following Creator on GitLab", "url": "https://gitlab.com/K1sh-M1sh"},
             ]
             self.rpc.update(
                 state=state_text,
@@ -1717,7 +1760,8 @@ class CodeEditorApp:
     """Главный класс приложения RealCode"""
     
     def __init__(self, root):
-        print("Привет, Юзер! Удачного кодинга!")
+        url = GITHUB_VERSION_MIN
+        
         self.root = root
         self.config = load_config()
         self.root.title(APP_NAME)
@@ -1734,6 +1778,15 @@ class CodeEditorApp:
         self.highlighter = None
         self.linter = None
         self._dialog_open = False
+
+        self.app_dir = get_app_dir()
+    
+        # Создаём все необходимые папки
+        ensure_directories(self.app_dir)
+        
+        # Теперь загружаем конфиг и остальное
+        self.root = root
+        self.config = load_config() 
         
         self._highlight_after_id = None
         self._minimap_after_id = None
@@ -1780,8 +1833,134 @@ class CodeEditorApp:
         self.original_stderr = sys.stderr
         sys.stdout = self
         sys.stderr = self
-        
+
+        self.plugin_manager = PluginManager(self)
+        self.plugin_manager.load_plugins()
+
         threading.Thread(target=self._check_updates_thread, daemon=True).start()
+        print("Привет, Юзер! Удачного кодинга!")
+
+    def open_marketplace(self):
+        PluginMarketplaceDialog(self.root, self)
+
+    def apply_theme(self):
+        """Применяет текущие цвета из VSColorScheme ко всем виджетам."""
+        # Обновляем корневое окно
+        self.root.configure(bg=VSColorScheme.BG_DARK)
+        
+        # Обновляем строку состояния
+        if hasattr(self, 'status_label') and self.status_label:
+            self.status_label.configure(bg=VSColorScheme.STATUS_BG, fg="white")
+        if hasattr(self, 'pos_label') and self.pos_label:
+            self.pos_label.configure(bg=VSColorScheme.STATUS_BG, fg="white")
+        
+        # Обновляем панели
+        if hasattr(self, 'main_paned') and self.main_paned:
+            self.main_paned.configure(bg=VSColorScheme.BORDER)
+        if hasattr(self, 'center_paned') and self.center_paned:
+            self.center_paned.configure(bg=VSColorScheme.BORDER)
+        
+        # Обновляем редактор
+        if hasattr(self, 'editor') and self.editor:
+            self.editor.configure(
+                bg=VSColorScheme.BG_DARK,
+                fg=VSColorScheme.FG,
+                insertbackground=VSColorScheme.FG,
+                selectbackground=VSColorScheme.SELECTION
+            )
+        
+        # Обновляем номера строк
+        if hasattr(self, 'line_numbers') and self.line_numbers:
+            self.line_numbers.configure(bg=VSColorScheme.BG_MEDIUM)
+            self.line_numbers.update_numbers()
+        
+        # Обновляем консоль
+        if hasattr(self, 'console') and self.console:
+            self.console.configure(
+                bg=VSColorScheme.BG_DARK,
+                fg=VSColorScheme.FG_LIGHT
+            )
+        
+        # Обновляем панель проводника
+        if hasattr(self, 'explorer_frame') and self.explorer_frame:
+            self.explorer_frame.configure(bg=VSColorScheme.BG_MEDIUM)
+        
+        # Обновляем дерево файлов (если есть)
+        if hasattr(self, 'file_tree') and self.file_tree:
+            style = ttk.Style()
+            style.theme_use("clam")
+            style.configure(
+                "Treeview",
+                background=VSColorScheme.BG_LIGHT,
+                foreground=VSColorScheme.FG,
+                fieldbackground=VSColorScheme.BG_LIGHT
+            )
+            style.map(
+                "Treeview",
+                background=[("selected", VSColorScheme.SELECTION)]
+            )
+        
+        # Обновляем вкладки (tab bar)
+        if hasattr(self, 'tab_bar') and self.tab_bar:
+            self.tab_bar.configure(bg=VSColorScheme.BG_MEDIUM)
+        
+        if hasattr(self, 'tabs_container') and self.tabs_container:
+            self.tabs_container.configure(bg=VSColorScheme.BG_MEDIUM)
+        
+        # Обновляем панель инструментов
+        if hasattr(self, 'toolbar') and self.toolbar:
+            self.toolbar.configure(bg=VSColorScheme.BG_MEDIUM)
+            for child in self.toolbar.winfo_children():
+                if isinstance(child, tk.Label):
+                    child.configure(bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG)
+        
+        # Обновляем мини-карту
+        if hasattr(self, 'minimap') and self.minimap:
+            self.minimap.configure(bg=VSColorScheme.BG_MEDIUM)
+            self.minimap.update_minimap()
+        
+        # Обновляем фон редакторной области
+        if hasattr(self, 'editor_area') and self.editor_area:
+            self.editor_area.configure(bg=VSColorScheme.BG_DARK)
+        
+        if hasattr(self, 'editor_container') and self.editor_container:
+            self.editor_container.configure(bg=VSColorScheme.BG_DARK)
+        
+        # Обновляем консольную область
+        if hasattr(self, 'console_area') and self.console_area:
+            self.console_area.configure(bg=VSColorScheme.BG_DARK)
+        
+        # Обновляем консольный заголовок
+        if hasattr(self, 'console_header') and self.console_header:
+            self.console_header.configure(bg=VSColorScheme.STATUS_BG)
+            for child in self.console_header.winfo_children():
+                if isinstance(child, tk.Label):
+                    child.configure(bg=VSColorScheme.STATUS_BG, fg="white")
+        
+        # Перерисовываем все вкладки
+        if hasattr(self, 'current_project') and self.current_project:
+            for tab in self.current_project.tabs:
+                if tab.pinned:
+                    tab.pin_btn.configure(fg=VSColorScheme.PINNED)
+                else:
+                    tab.pin_btn.configure(fg=VSColorScheme.FG_LIGHT)
+                if tab.is_active:
+                    tab._set_bg_color(VSColorScheme.TAB_ACTIVE)
+                else:
+                    tab._set_bg_color(VSColorScheme.TAB_INACTIVE)
+        
+        # Обновляем статусную строку
+        if hasattr(self, 'status_label') and self.status_label:
+            self.status_label.configure(bg=VSColorScheme.STATUS_BG)
+        
+        # Обновляем экран приветствия
+        if hasattr(self, 'welcome_screen') and self.welcome_screen:
+            for child in self.welcome_screen.frame.winfo_children():
+                child.configure(bg=VSColorScheme.BG_DARK)
+            # Можно пересоздать экран, но для простоты просто обновим фон
+            self.welcome_screen.frame.configure(bg=VSColorScheme.BG_DARK)
+        
+        self.log("✅ Тема применена")
     
     def _setup_window(self):
         x = self.config.get("window_x", 100)
@@ -2779,6 +2958,10 @@ class CodeEditorApp:
         edit_menu.add_separator()
         edit_menu.add_command(label="Найти (Ctrl+F)", command=self.open_find)
         edit_menu.add_command(label="Перейти к строке (Ctrl+G)", command=self.go_to_line)
+
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Плагины", menu=tools_menu)
+        tools_menu.add_command(label="Магазин плагинов", command=self.open_marketplace)
         
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Вид", menu=view_menu)
@@ -2821,6 +3004,11 @@ class CodeEditorApp:
         menubar.add_cascade(label="Справка", menu=help_menu)
         help_menu.add_command(label="Проверить обновления", command=self.manual_check_updates)
         help_menu.add_command(label="О программе", command=self.show_about)
+        help_menu.add_command(label="Сообщить о баге", command=self.report_bug)
+
+    def report_bug(self):
+        """Открывает диалог для отправки баг-репорта."""
+        BugReportDialog(self.root, self)
     
     # ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ
     def _bind_global_shortcuts(self):
@@ -3742,6 +3930,662 @@ class Linter:
         self.ignored_messages.add(key)
         self._save_ignored()
         self._start_lint()
+
+class BugReportDialog:
+    def __init__(self, parent, app):
+        self.parent = parent
+        
+        try:
+            if os.path.exists("iconBugReport.ico"):
+                self.root.iconbitmap("iconBugReport.ico")
+        except:
+            pass
+
+        self.app = app
+        self.window = None
+        self._show()
+
+    def _show(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Создание баг-репорта...")
+        self.window.geometry("450x400")
+        self.window.configure(bg=VSColorScheme.BG_MEDIUM)
+        self.window.transient(self.parent)
+        self.window.grab_set()
+        self.window.resizable(False, False)
+
+        tk.Label(
+            self.window,
+            text="Создать баг-репорт:",
+            bg=VSColorScheme.BG_MEDIUM,
+            fg=VSColorScheme.FG,
+            font=("Segoe UI", 14, "bold"),
+            pady=10
+        ).pack()
+
+        tk.Label(
+            self.window,
+            text="Ваше имя (необязательно, можно никнейм):",
+            bg=VSColorScheme.BG_MEDIUM,
+            fg=VSColorScheme.FG,
+            font=("Segoe UI", 10)
+        ).pack(anchor="w", padx=30, pady=(10, 0))
+
+        self.name_var = tk.StringVar()
+        name_entry = tk.Entry(
+            self.window,
+            textvariable=self.name_var,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            insertbackground=VSColorScheme.FG,
+            font=("Segoe UI", 10),
+            width=40
+        )
+        name_entry.pack(padx=30, pady=5)
+        name_entry.focus()
+
+        tk.Label(
+            self.window,
+            text="Email (для связи с вами по вопросам):",
+            bg=VSColorScheme.BG_MEDIUM,
+            fg=VSColorScheme.FG,
+            font=("Segoe UI", 10)
+        ).pack(anchor="w", padx=30, pady=(10, 0))
+
+        self.email_var = tk.StringVar()
+        email_entry = tk.Entry(
+            self.window,
+            textvariable=self.email_var,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            insertbackground=VSColorScheme.FG,
+            font=("Segoe UI", 10),
+            width=40
+        )
+        email_entry.pack(padx=30, pady=5)
+
+        tk.Label(
+            self.window,
+            text="Описание проблемы (что не так, как воспроизвести):",
+            bg=VSColorScheme.BG_MEDIUM,
+            fg=VSColorScheme.FG,
+            font=("Segoe UI", 10)
+        ).pack(anchor="w", padx=30, pady=(10, 0))
+
+        self.message_text = tk.Text(
+            self.window,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            insertbackground=VSColorScheme.FG,
+            font=("Segoe UI", 10),
+            height=6,
+            width=40,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=5,
+            pady=5
+        )
+        self.message_text.pack(padx=30, pady=5)
+
+        btn_frame = tk.Frame(self.window, bg=VSColorScheme.BG_MEDIUM)
+        btn_frame.pack(pady=20)
+
+        send_btn = tk.Button(
+            btn_frame,
+            text="Отправить",
+            command=self._on_send_click,
+            bg=VSColorScheme.BUTTON_BG,
+            fg="white",
+            relief=tk.FLAT,
+            padx=20,
+            pady=5,
+            font=("Segoe UI", 10, "bold"),
+            cursor="hand2"
+        )
+        send_btn.pack(side=tk.LEFT, padx=10)
+
+        cancel_btn = tk.Button(
+            btn_frame,
+            text="Отмена",
+            command=self.window.destroy,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            relief=tk.FLAT,
+            padx=20,
+            pady=5,
+            font=("Segoe UI", 10),
+            cursor="hand2"
+        )
+        cancel_btn.pack(side=tk.LEFT, padx=10)
+
+
+    def _on_send_click(self):
+        message = self.message_text.get("1.0", tk.END).strip()
+        self._send_report(message)
+
+    def _send_report(self, message):
+        url = GITHUB_VERSION_MIN
+        if not message:
+            messagebox.showwarning("Напишите что не так", "Опишите вашу проблему подробнее")
+            return
+
+        name = self.name_var.get().strip() or "Аноним"
+        email = self.email_var.get().strip()
+
+        if email and not self._is_valid_email(email):
+            messagebox.showwarning("Невалидный email!", "Пожалуйста, введите валидный email.")
+            return
+
+        if not email:
+            messagebox.showwarning("Требуется email", "Для связи с вами по некоторым вопросам (например, если надо что-либо добавить), необходим email. Также, в описании проблемы вы можете добавить дополнительные средства связи.")
+            return
+
+        report_data = {
+            "name": name,
+            "email": email,
+            "message": message,
+            "_subject": f"Баг-репорт от {name} (RealCode {VERSION})"
+        }
+
+        # Блокируем интерфейс
+        self.window.config(cursor="watch")
+        for child in self.window.winfo_children():
+            if isinstance(child, tk.Button):
+                child.config(state=tk.DISABLED)
+
+        try:
+            # Получаем JSON
+            response = requests.get(url)
+            response.raise_for_status()
+            github_data = response.json()
+            
+            MIN_REALCODE_VERSION = github_data['min_version']
+            
+            current = version.parse(VERSION_REALCODE)
+            required = version.parse(MIN_REALCODE_VERSION)
+            
+            if current < required:
+                messagebox.showwarning(
+                    f"Ваша версия RealCode ({VERSION_REALCODE}) больше не поддерживается!", 
+                    f"Сейчас ваша версия RealCode: {VERSION_REALCODE}, она не поддерживается разработчиком. Пожалуйста, обновитесь до последней версии, так как, возможно, этот баг был исправлен."
+                )
+                self._unblock_interface() # Разблокируем кнопки, если обновляться принудительно не заставляем
+            else:
+                threading.Thread(target=self._send_thread, args=(report_data,), daemon=True).start()
+
+        except requests.exceptions.RequestException as e:
+            print(f"Ошибка сети: {e}")
+            messagebox.showerror("Ошибка сети", "Не удалось проверить актуальность версии. Проверьте интернет-соединение.")
+            self._unblock_interface()
+        except KeyError:
+            print("В JSON отсутствует ключ 'min_version'.")
+            self._unblock_interface()
+        except version.InvalidVersion:
+            print("Ошибка: один из номеров версий имеет некорректный формат.")
+            self._unblock_interface()
+        except json.JSONDecodeError: # Перехватываем ошибку невалидного JSON
+            print("Ошибка: Файл содержит некорректный JSON.")
+            self._unblock_interface()
+
+    def _unblock_interface(self):
+        """Вспомогательный метод для возврата интерфейса в нормальное состояние"""
+        self.window.config(cursor="")
+        for child in self.window.winfo_children():
+            if isinstance(child, tk.Button):
+                child.config(state=tk.NORMAL)
+
+    def _is_valid_email(self, email):
+        import re
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        return re.match(pattern, email) is not None
+
+    def _send_thread(self, data):
+        try:
+            url = FORMSPREE_ID # Тут должен быть ваш FormSpree адрес (не хардкорьте, лучше сделайте в config.py для удобства)
+            response = requests.post(url, data=data, timeout=10)
+            if response.status_code == 200:
+                self.window.after(0, self._on_success)
+            else:
+                self.window.after(0, lambda: self._on_error(f"Ошибка: {response.status_code}: {response.text[:200]}..."))
+        except Exception as e:
+            self.window.after(0, lambda: self._on_error(str(e)))
+
+    def _on_success(self):
+        self.window.destroy()
+        messagebox.showinfo("Благодарим за ваш вклад в развитие RealCode!", "Ваш баг-репорт был отправлен! Мы рассмотрим его и ответим в ближайшее время. Спасибо, что делайте RealCode лучше!")
+
+    def _on_error(self, error_msg):
+        self.window.config(cursor="")
+        for child in self.window.winfo_children():
+            if isinstance(child, tk.Button):
+                child.config(state=tk.NORMAL)
+        messagebox.showerror("Ошибка отправки", f"Не удалось отправить сообщение:\n{error_msg}\n\nПожалуйста, попробуйте позже.")
+
+class PluginManager:
+    PLUGINS_URL = PLUGIN_URL_CONF
+    PLUGINS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
+
+    def __init__(self, app):
+        self.app = app
+        self.PLUGINS_DIR = os.path.join(self.app.app_dir, 'plugins')
+        self.plugins = []
+        self.installed_plugins = self._get_installed()
+        os.makedirs(self.PLUGINS_DIR, exist_ok=True)
+
+    def uninstall_plugin(self, plugin_id):
+        plugin_dir = os.path.join(self.PLUGINS_DIR, plugin_id)
+        if os.path.exists(plugin_dir):
+            shutil.rmtree(plugin_dir)
+            return True
+        return False
+
+    def _get_installed(self):
+        """Возвращает список установленных плагинов (по названиям папок)."""
+        if not os.path.exists(self.PLUGINS_DIR):
+            return []
+        return [d for d in os.listdir(self.PLUGINS_DIR) if os.path.isdir(os.path.join(self.PLUGINS_DIR, d))]
+
+    def fetch_plugins(self, callback):
+        """Асинхронно загружает список плагинов из GitHub."""
+        def _fetch():
+            try:
+                response = requests.get(self.PLUGINS_URL, timeout=5)
+                if response.status_code == 200:
+                    plugins = json.loads(response.text)
+                    self.plugins = plugins
+                    self.app.root.after(0, lambda: callback(plugins, None))
+                else:
+                    self.app.root.after(0, lambda: callback(None, f"HTTP {response.status_code}"))
+            except Exception as e:
+                self.app.root.after(0, lambda: callback(None, str(e)))
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def install_plugin(self, plugin, callback):
+        def _install():
+            try:
+                download_url = plugin['download_url']
+                response = requests.get(download_url, timeout=30)
+                if response.status_code != 200:
+                    self.app.root.after(0, lambda: callback(False, f"Ошибка скачивания: {response.status_code}"))
+                    return
+
+                plugin_id = plugin['id']
+                plugin_dir = os.path.join(self.PLUGINS_DIR, plugin_id)
+
+                # Создаём временную папку для распаковки
+                import tempfile
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    # Распаковываем архив
+                    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+                        for name in z.namelist():
+                            if '..' in name or os.path.isabs(name):
+                                self.app.root.after(0, lambda: callback(False, "Архив содержит недопустимые пути"))
+                                return
+                        z.extractall(tmpdir)
+
+                    # Ищем main.py рекурсивно
+                    main_file = None
+                    for root, dirs, files in os.walk(tmpdir):
+                        if 'main.py' in files:
+                            main_file = os.path.join(root, 'main.py')
+                            break
+
+                    if not main_file:
+                        self.app.root.after(0, lambda: callback(False, "В архиве не найден main.py"))
+                        return
+
+                    # Удаляем старую папку плагина
+                    if os.path.exists(plugin_dir):
+                        shutil.rmtree(plugin_dir)
+
+                    # Копируем папку, содержащую main.py, в plugin_dir
+                    source_dir = os.path.dirname(main_file)
+                    shutil.copytree(source_dir, plugin_dir)
+
+                self.app.root.after(0, lambda: callback(True, None))
+            except Exception as e:
+                self.app.root.after(0, lambda: callback(False, str(e)))
+
+        threading.Thread(target=_install, daemon=True).start()
+
+    def load_plugins(self):
+        for plugin_id in self._get_installed():
+            plugin_path = os.path.join(self.PLUGINS_DIR, plugin_id)
+            if os.path.isdir(plugin_path):
+                # Добавляем путь в sys.path (если ещё не добавлен)
+                if plugin_path not in sys.path:
+                    sys.path.insert(0, plugin_path)
+                try:
+                    # Пробуем импортировать main.py
+                    # Используем importlib для гибкости
+                    import importlib
+                    spec = importlib.util.spec_from_file_location(f"{plugin_id}.main", os.path.join(plugin_path, "main.py"))
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        if hasattr(module, 'init'):
+                            module.init(self.app)
+                            self.app.log(f"✅ Плагин '{plugin_id}' загружен")
+                        else:
+                            self.app.log(f"⚠️ Плагин '{plugin_id}' не содержит функцию init()")
+                    else:
+                        self.app.log(f"⚠️ Не найден main.py в плагине '{plugin_id}'")
+                except Exception as e:
+                    self.app.log(f"⚠️ Ошибка загрузки плагина '{plugin_id}': {e}")
+                    import traceback
+                    traceback.print_exc()
+
+class PluginMarketplaceDialog:
+    def __init__(self, parent, app):
+        self.parent = parent
+        self.app = app
+        self.plugin_manager = PluginManager(app)
+
+        try:
+            if os.path.exists("iconPluginMarketplace.ico"):
+                self.root.iconbitmap("icon.ico")
+        except:
+            pass
+
+        self.window = None
+        self.tree = None
+        self._show()
+        self.tooltip_window = None
+
+    def _show(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Маркетплейс плагинов")
+        self.window.geometry("700x500")
+        self.window.configure(bg=VSColorScheme.BG_MEDIUM)
+        self.window.transient(self.parent)
+        self.window.grab_set()
+        self.window.resizable(True, True)
+
+        # Заголовок
+        tk.Label(
+            self.window,
+            text="Маркетплейс плагинов",
+            bg=VSColorScheme.BG_MEDIUM,
+            fg=VSColorScheme.FG,
+            font=("Segoe UI", 14, "bold"),
+            pady=10
+        ).pack()
+
+        # Фрейм для таблицы
+        frame = tk.Frame(self.window, bg=VSColorScheme.BG_MEDIUM)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Treeview (столбцы: Название, Версия, Автор, Категория)
+        columns = ("name", "version", "author", "category")
+        self.tree = ttk.Treeview(frame, columns=columns, show="headings", height=15)
+        self.tree.heading("name", text="Название")
+        self.tree.heading("version", text="Версия")
+        self.tree.heading("author", text="Автор")
+        self.tree.heading("category", text="Категория")
+        self.tree.column("name", width=200)
+        self.tree.column("version", width=70)
+        self.tree.column("author", width=150)
+        self.tree.column("category", width=100)
+
+        # Скроллбар
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Кнопки
+        btn_frame = tk.Frame(self.window, bg=VSColorScheme.BG_MEDIUM)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        self.install_btn = tk.Button(
+            btn_frame,
+            text="Установить выбранный",
+            command=self._install_selected,
+            bg=VSColorScheme.BUTTON_BG,
+            fg="white",
+            relief=tk.FLAT,
+            padx=15,
+            pady=5,
+            cursor="hand2"
+        )
+        self.install_btn.pack(side=tk.LEFT, padx=5)
+
+        self.uninstall_btn = tk.Button(
+            btn_frame,
+            text="Удалить",
+            command=self._uninstall_selected,
+            bg="#d9534f",
+            fg="white",
+            relief=tk.FLAT,
+            padx=15,
+            pady=5,
+            cursor="hand2"
+        )
+        self.uninstall_btn.pack(side=tk.LEFT, padx=5)
+
+        self.refresh_btn = tk.Button(
+            btn_frame,
+            text="Обновить список",
+            command=self._refresh,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            relief=tk.FLAT,
+            padx=15,
+            pady=5,
+            cursor="hand2"
+        )
+        self.refresh_btn.pack(side=tk.RIGHT, padx=5)
+
+        self.close_btn = tk.Button(
+            btn_frame,
+            text="Закрыть",
+            command=self.window.destroy,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            relief=tk.FLAT,
+            padx=15,
+            pady=5,
+            cursor="hand2"
+        )
+        self.close_btn.pack(side=tk.RIGHT, padx=5)
+
+        # Статус-бар
+        self.status_label = tk.Label(
+            self.window,
+            text="Загрузка списка плагинов...",
+            bg=VSColorScheme.STATUS_BG,
+            fg="white",
+            font=("Segoe UI", 9),
+            anchor="w",
+            padx=10
+        )
+        self.status_label.pack(fill=tk.X)
+
+        # Загружаем список
+        self._refresh()
+
+    def _refresh(self):
+        """Обновляет список плагинов из GitHub."""
+        self.status_label.config(text="Загрузка...")
+        self.install_btn.config(state=tk.DISABLED)
+        self.uninstall_btn.config(state=tk.DISABLED)
+
+        # Очищаем таблицу
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        self.plugin_manager.fetch_plugins(self._on_plugins_loaded)
+
+    def _on_tree_motion(self, event):
+        """Показывает описание плагина при наведении на строку"""
+        item = self.tree.identify_row(event.y)
+        if not item:
+            self._hide_tooltip()
+            return
+
+        # Получаем ID плагина из тегов
+        tags = self.tree.item(item, "tags")
+        plugin_id = tags[0] if tags else None
+        if not plugin_id:
+            self._hide_tooltip()
+            return
+
+        # Ищем плагин по ID
+        plugin = next((p for p in self.plugin_manager.plugins if p['id'] == plugin_id), None)
+        if not plugin:
+            self._hide_tooltip()
+            return
+
+        # Если есть описание, показываем его
+        description = plugin.get('description', '')
+        if description:
+            # Получаем координаты мыши
+            x, y, _, _ = self.tree.bbox(item)
+            x += self.tree.winfo_rootx() + 50
+            y += self.tree.winfo_rooty() + 20
+            self._show_tooltip(description, x, y)
+        else:
+            self._hide_tooltip()
+
+    def _on_tree_leave(self, event):
+        """Скрывает подсказку при выходе мыши из Treeview"""
+        self._hide_tooltip()
+
+    def _show_tooltip(self, text, x, y):
+        """Показывает всплывающую подсказку"""
+        self._hide_tooltip()
+        self.tooltip_window = tk.Toplevel(self.window)
+        self.tooltip_window.wm_overrideredirect(True)
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(self.tooltip_window, text=text, justify=tk.LEFT,
+                        background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                        font=("Segoe UI", 9, "normal"), padx=5, pady=3)
+        label.pack()
+
+    def _hide_tooltip(self):
+        """Уничтожает окно подсказки"""
+        if hasattr(self, 'tooltip_window') and self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+    def _on_plugins_loaded(self, plugins, error):
+        if error:
+            self.status_label.config(text=f"❌ Ошибка: {error}")
+            return
+
+        installed = self.plugin_manager._get_installed()
+        self.status_label.config(text=f"✅ Загружено {len(plugins)} плагинов")
+        for plugin in plugins:
+            is_installed = plugin['id'] in installed
+            values = (
+                plugin['name'] + (" ✅" if is_installed else ""),
+                plugin['version'],
+                plugin['author'],
+                plugin['category']
+            )
+            item = self.tree.insert("", tk.END, values=values, tags=(plugin['id'],))
+            if is_installed:
+                self.tree.item(item, tags=(plugin['id'], 'installed'))
+
+            # Добавляем всплывающую подсказку для строки (при наведении)
+            # Описание берём из plugin['description'], если есть
+            if 'description' in plugin:
+                # Привязываем к ячейке "Название" (в столбце 0)
+                # Можно к целой строке, но проще к отдельному элементу
+                # Получаем идентификатор ячейки (нестандартно, но можно через теги)
+                # Вместо этого привяжем к самому item через обработку события
+                # Сделаем через bind на Treeview с проверкой item
+                pass
+
+        # Альтернативный способ: единый обработчик для всего Treeview
+        self.tree.bind('<Motion>', self._on_tree_motion)
+        self.tree.bind('<Leave>', self._on_tree_leave)
+
+        self.install_btn.config(state=tk.NORMAL)
+        self.uninstall_btn.config(state=tk.NORMAL)
+
+    def _install_selected(self):
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Выберите плагин", "Пожалуйста, выберите плагин из списка.")
+            return
+        item = selected[0]
+        plugin_id = self.tree.item(item, "tags")[0]
+        # Находим плагин по id
+        plugin = next((p for p in self.plugin_manager.plugins if p['id'] == plugin_id), None)
+        if not plugin:
+            return
+
+        # Проверяем, не установлен ли уже
+        if plugin_id in self.plugin_manager._get_installed():
+            messagebox.showinfo("Уже установлен", "Этот плагин уже установлен.")
+            return
+
+        self.status_label.config(text=f"Установка {plugin['name']}...")
+        self.install_btn.config(state=tk.DISABLED)
+        self.plugin_manager.install_plugin(plugin, self._on_install_done)
+
+    def _on_install_done(self, success, error):
+        self.install_btn.config(state=tk.NORMAL)
+        if success:
+            self.status_label.config(text="Установка завершена успешно")
+            self._refresh()  # обновляем список
+            messagebox.showinfo("Плагин успешно установлен!", "Плагин установлен! Перезапустите RealCode для активации.")
+        else:
+            self.status_label.config(text=f"Ошибка: {error}")
+            messagebox.showerror("Ошибка", f"Не удалось установить плагин:\n{error}")
+
+    def _uninstall_selected(self):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        item = selected[0]
+        plugin_id = self.tree.item(item, "tags")[0]
+        if not plugin_id:
+            return
+        if plugin_id not in self.plugin_manager._get_installed():
+            messagebox.showinfo("Не установлен", "Плагин не установлен.")
+            return
+        if messagebox.askyesno(f"Удаление плагина {plugin_id}", f"Удалить плагин '{plugin_id}'?"):
+            self.plugin_manager.uninstall_plugin(plugin_id)
+            self.status_label.config(text=f"Плагин {plugin_id} удалён")
+            self._refresh()
+
+class ToolTip:
+    """Всплывающая подсказка для виджетов"""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind('<Enter>', self.show_tip)
+        self.widget.bind('<Leave>', self.hide_tip)
+        self.widget.bind('<Motion>', self.move_tip)
+
+    def show_tip(self, event):
+        if self.tip_window or not self.text:
+            return
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 20
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                         font=("Segoe UI", 9, "normal"))
+        label.pack()
+
+    def hide_tip(self, event):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+    def move_tip(self, event):
+        if self.tip_window:
+            x, y, _, _ = self.widget.bbox("insert")
+            x += self.widget.winfo_rootx() + 25
+            y += self.widget.winfo_rooty() + 20
+            self.tip_window.wm_geometry(f"+{x}+{y}")
 
 if __name__ == "__main__":
     root = tk.Tk()

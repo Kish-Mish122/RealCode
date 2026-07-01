@@ -11,3 +11,9 @@ version_info.txt
 backup_main/
 venv/
 README.md
+SupportPIN.txt
+example-plugin/
+light-theme/
+plugins/
+RealCodeBuild/
+*.zip

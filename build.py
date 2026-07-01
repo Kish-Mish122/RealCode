@@ -17,11 +17,11 @@ def backup_main_py():
         with open("main.py", "rb") as f:
             content = f.read()
             if b'\x00' in content:
-                print("❌ ОШИБКА: main.py содержит нулевые байты! Файл повреждён.")
+                print("ОШИБКА: main.py содержит нулевые байты! Файл повреждён.")
                 print("   Сборка прервана. Восстановите main.py из резервной копии.")
                 return False
     except Exception as e:
-        print(f"⚠️ Не удалось проверить main.py: {e}")
+        print(f"Не удалось проверить main.py: {e}")
         return False
     
     # Создаём папку для бэкапов, если её нет
@@ -35,10 +35,10 @@ def backup_main_py():
     
     try:
         shutil.copy2("main.py", backup_path)
-        print(f"✅ Создана резервная копия: {backup_path}")
+        print(f"Создана резервная копия: {backup_path}")
         return True
     except Exception as e:
-        print(f"⚠️ Не удалось создать бэкап: {e}")
+        print(f"Не удалось создать бэкап: {e}")
         return False
 
 def check_windows():
@@ -194,7 +194,6 @@ def main():
         input("\nНажмите Enter для выхода...")
         return
     
-    # Проверяем settings.json - ЕГО НЕ УДАЛЯТЬ!
     if os.path.exists("settings.json"):
         print("settings.json найден (будет сохранен)")
     
@@ -219,12 +218,12 @@ VSVersionInfo(
         u'040904B0',
         [StringStruct(u'CompanyName', u'K1sh-M1sh'),
         StringStruct(u'FileDescription', u'RealCode for Scripting'),
-        StringStruct(u'FileVersion', u'3.6.0'),
+        StringStruct(u'FileVersion', u'3.7.0'),
         StringStruct(u'InternalName', u'RealCode'),
         StringStruct(u'LegalCopyright', u'MIT'),
         StringStruct(u'OriginalFilename', u'RealCode.exe'),
         StringStruct(u'ProductName', u'RealCode'),
-        StringStruct(u'ProductVersion', u'3.6.0'),
+        StringStruct(u'ProductVersion', u'3.7.0'),
         StringStruct(u'Comments', u'RealCode for Scripting')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [0x0409, 0x04B0])])

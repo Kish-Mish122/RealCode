@@ -3,7 +3,7 @@
 
 [Setup]
 AppName=RealCode
-AppVersion=3.6
+AppVersion=3.7
 AppPublisher=K1sh-M1sh
 DefaultDirName={pf}\RealCode
 DefaultGroupName=RealCode
@@ -24,7 +24,7 @@ Name: "associatecs"; Description: "Добавить поддержку .cs фа�
 Name: "associatesln"; Description: "Добавить поддержку .sln файлы с RealCode"; GroupDescription: "Ассоциации файлов:"; Flags: unchecked
 
 [Files]
-Source: "E:\RealCode\dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "E:\RealCode\RealCodeBuild\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Settings.json, plugins\"
 
 [Icons]
 Name: "{group}\RealCode"; Filename: "{app}\RealCode.exe"; WorkingDir: "{app}"
