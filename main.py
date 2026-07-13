@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # main.py - RealCode
 # Внимание! Данная версия - бета, тут могут быть не дороботки, баги, вылеты и другие ошибки, мещающие работе RealCode. Пожалуйста, если вы заметите какой-то либо баг в коде, не остовайтесь в стороне.
 # Помогите проекту стать лучше. Напишите на help.k1shm1sh@gmail.com с темой "Баги RealCode". Если баг будет существенный, то я вас добавлю как помощников в Справка->О программе.
@@ -48,6 +50,19 @@ old_stderr = sys.stderr
 sys.stdout = StringIO()
 sys.stderr = StringIO()
 
+def get_os_type():
+    """Определяет тип ОС для скачивания обновлений"""
+    if sys.platform == 'win32':
+        return 'windows'
+    elif sys.platform.startswith('linux'):
+        return 'linux'
+    elif sys.platform == 'darwin':
+        return 'macos'
+    return 'unknown'
+
+def is_linux():
+    return sys.platform.startswith('linux')
+
 
 # Хардкорить токены, ID и другие важные данные, которые как бы нельзя вставлять просто в код - не лучшая идея. Поэтому, советую создать файл config.py и туда вставлять все то, что
 # важно для скрипта, но и важно для безопасности
@@ -74,6 +89,21 @@ CONFIG_FILE = "settings.json"
 DISCORD_CLIENT_ID = DISCORD_ID
 
 MIN_REALCODE = MIN_REALCODE_VERSION
+
+def get_app_dir():
+    """Возвращает директорию, где находится исполняемый файл (или скрипт)."""
+    if getattr(sys, 'frozen', False):
+        # Запущено как .exe (PyInstaller)
+        return os.path.dirname(sys.executable)
+    else:
+        # Запущено как скрипт
+        return os.path.dirname(os.path.abspath(__file__))
+
+def is_windows():
+    return sys.platform == 'win32'
+
+def is_linux():
+    return sys.platform.startswith('linux')
 
 @dataclass
 class LintMessage:
@@ -210,16 +240,30 @@ def setup_python_paths():
     except:
         pass
     
-    common_paths = [
-        os.path.expanduser("~\\AppData\\Local\\Python\\Python39\\Lib\\site-packages"),
-        os.path.expanduser("~\\AppData\\Local\\Python\\Python310\\Lib\\site-packages"),
-        os.path.expanduser("~\\AppData\\Local\\Python\\Python311\\Lib\\site-packages"),
-        os.path.expanduser("~\\AppData\\Local\\Python\\Python312\\Lib\\site-packages"),
-        "C:\\Python39\\Lib\\site-packages",
-        "C:\\Python310\\Lib\\site-packages",
-        "C:\\Python311\\Lib\\site-packages",
-        "C:\\Python312\\Lib\\site-packages",
-    ]
+    # Кроссплатформенные пути
+    if sys.platform == 'win32':
+        common_paths = [
+            os.path.expanduser("~\\AppData\\Local\\Python\\Python39\\Lib\\site-packages"),
+            os.path.expanduser("~\\AppData\\Local\\Python\\Python310\\Lib\\site-packages"),
+            os.path.expanduser("~\\AppData\\Local\\Python\\Python311\\Lib\\site-packages"),
+            os.path.expanduser("~\\AppData\\Local\\Python\\Python312\\Lib\\site-packages"),
+            "C:\\Python39\\Lib\\site-packages",
+            "C:\\Python310\\Lib\\site-packages",
+            "C:\\Python311\\Lib\\site-packages",
+            "C:\\Python312\\Lib\\site-packages",
+        ]
+    else:  # Linux, macOS
+        common_paths = [
+            os.path.expanduser("~/.local/lib/python3.*/site-packages"),
+            "/usr/local/lib/python3.*/dist-packages",
+            "/usr/lib/python3.*/dist-packages",
+        ]
+        # Используем glob для поиска
+        import glob
+        expanded_paths = []
+        for path in common_paths:
+            expanded_paths.extend(glob.glob(path))
+        common_paths = expanded_paths
     
     for path in common_paths:
         if os.path.exists(path) and path not in sys.path:
@@ -228,7 +272,6 @@ def setup_python_paths():
     
     if added_paths:
         print(f"✅ Добавлено путей: {len(added_paths)}")
-
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -1103,7 +1146,7 @@ class SettingsDialog:
         self.window.geometry("600x600")
         self.window.configure(bg=VSColorScheme.BG_MEDIUM)
         self.window.transient(self.parent)
-        self.window.grab_set()
+        # self.window.grab_set()
         tk.Label(
             self.window,
             text="НАСТРОЙКИ",
@@ -1490,15 +1533,48 @@ class UpdateChecker:
                 if not latest_version_str:
                     raise ValueError("Не удалось извлечь номер версии из тега")
 
-            # Ищем файл .exe в assets
+            # Ищем файл для текущей ОС
             download_url = None
+            os_type = get_os_type()
+
+            print(f"🔍 Поиск файла для {os_type}...")
+
             for asset in release_info.get('assets', []):
-                if asset['name'].endswith('.exe'):
+                asset_name = asset['name'].lower()
+                
+                # Windows: ищем .exe
+                if os_type == 'windows' and asset_name.endswith('.exe'):
                     download_url = asset['browser_download_url']
                     break
+                
+                # Linux: ищем .AppImage или файлы с linux в имени
+                elif os_type == 'linux':
+                    if asset_name.endswith('.appimage') or 'linux' in asset_name:
+                        download_url = asset['browser_download_url']
+                        break
+                    # Если ничего не нашли, ищем файл без расширения (бинарник)
+                    elif not asset_name.endswith(('.exe', '.dmg', '.appimage')):
+                        download_url = asset['browser_download_url']
+                        break
+                
+                # macOS: ищем .dmg или .app
+                elif os_type == 'macos':
+                    if asset_name.endswith(('.dmg', '.app')):
+                        download_url = asset['browser_download_url']
+                        break
+
+            # Если не нашли специфичный файл - пробуем найти любой подходящий
+            if not download_url:
+                print("⚠️ Специфичный файл не найден, ищем любой...")
+                for asset in release_info.get('assets', []):
+                    # Пропускаем файлы с исходниками
+                    if 'source' not in asset['name'].lower() and 'src' not in asset['name'].lower():
+                        download_url = asset['browser_download_url']
+                        print(f"⚠️ Используем: {asset['name']}")
+                        break
 
             if not download_url:
-                raise ValueError("В релизе не найден .exe-файл")
+                raise ValueError(f"Не найден файл для {os_type} в релизе")
 
             # Сравниваем версии
             latest = version.parse(latest_version_str)
@@ -1539,7 +1615,7 @@ class UpdateChecker:
         self.update_dialog.geometry("650x540")
         self.update_dialog.configure(bg=VSColorScheme.BG_MEDIUM)
         self.update_dialog.transient(self.app.root)
-        self.update_dialog.grab_set()
+        # self.update_dialog.grab_set()
         self.update_dialog.resizable(False, False)
 
         self.update_dialog.update_idletasks()
@@ -1663,6 +1739,7 @@ class UpdateChecker:
         threading.Thread(target=self._download_and_install, daemon=True).start()
 
     def _download_and_install(self):
+        """Скачивание и установка обновления (кроссплатформенный)"""
         try:
             download_url = self.update_info.get('download_url')
 
@@ -1670,14 +1747,22 @@ class UpdateChecker:
                 self._show_error("Ссылка для скачивания не найдена")
                 return
 
+            # Определяем тип ОС
+            os_type = get_os_type()
+            print(f"📥 Скачивание для {os_type}...")
+
+            # Определяем путь для сохранения
             if getattr(sys, 'frozen', False):
                 current_exe = sys.executable
-                download_path = current_exe + ".new"
+                if os_type == 'windows':
+                    download_path = current_exe.replace('.exe', '.new.exe')
+                else:
+                    download_path = current_exe + '.new'
             else:
-                current_exe = os.path.abspath(__file__)
-                download_path = current_exe + ".new"
+                # Режим разработки
+                download_path = os.path.join(os.getcwd(), f'RealCode-{os_type}.new')
 
-            self._update_status("Загрузка в папку...", 10)
+            self._update_status("Загрузка обновления...", 10)
 
             import urllib.request
             import ssl
@@ -1691,21 +1776,21 @@ class UpdateChecker:
 
             urllib.request.urlretrieve(download_url, download_path, reporthook=report_progress)
 
-            # Проверяем, что файл скачался
+            # Проверяем загрузку
             if not os.path.exists(download_path) or os.path.getsize(download_path) == 0:
-                self._show_error("Скаченый файл был поврежден или он пустой...")
+                self._show_error("Скачанный файл поврежден или пустой")
                 return
 
-            self._update_status("Загрузка обновления...", 100)
+            self._update_status("Установка обновления...", 100)
             time.sleep(0.5)
 
-            if getattr(sys, 'frozen', False):
-                self._create_update_bat(current_exe, download_path)
-            else:
-                os.replace(download_path, current_exe)
-                self.update_dialog.after(0, self.update_dialog.destroy)
-                messagebox.showinfo("Обновление завершено",
-                                    "Обновление успешно установлено! Перезапустите программу.")
+            # Устанавливаем в зависимости от ОС
+            if os_type == 'windows':
+                self._install_windows_update(download_path)
+            elif os_type == 'linux':
+                self._install_linux_update(download_path)
+            elif os_type == 'macos':
+                self._install_macos_update(download_path)
 
         except Exception as e:
             self._show_error(f"Ошибка обновления:\n{e}")
@@ -1742,6 +1827,96 @@ del /f /q "%~f0"
     def _update_progress(self, value):
         if self.progress_bar:
             self.progress_bar['value'] = value
+
+    def _install_windows_update(self, download_path):
+        """Установка на Windows"""
+        current_exe = sys.executable
+        bat_path = os.path.join(os.path.dirname(current_exe), "update.bat")
+        
+        with open(bat_path, 'w', encoding='utf-8') as f:
+            f.write(f"""@echo off
+    chcp 65001 >nul
+    cd /d "%~dp0"
+    echo Обновление RealCode...
+    timeout /t 2 /nobreak >nul
+    :loop
+    taskkill /f /im RealCode.exe 2>nul
+    timeout /t 1 /nobreak >nul
+    copy /y "{os.path.basename(download_path)}" "{os.path.basename(current_exe)}" >nul
+    if %errorlevel% neq 0 goto loop
+    del /f /q "{os.path.basename(download_path)}"
+    start "" "{os.path.basename(current_exe)}"
+    del /f /q "%~f0"
+    """)
+        
+        self.update_dialog.after(0, self.update_dialog.destroy)
+        response = messagebox.askyesno("Обновление загружено!",
+                                    "Обновление загружено успешно! Установить сейчас?")
+        if response:
+            os.startfile(bat_path)
+            self.app.root.after(100, self.app.on_closing)
+
+    def _install_linux_update(self, download_path):
+        """Установка на Linux"""
+        current_exe = sys.executable
+        
+        # Делаем файл исполняемым
+        os.chmod(download_path, 0o755)
+        
+        script_path = os.path.join(os.path.dirname(current_exe), "update.sh")
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write(f"""#!/bin/bash
+    cd "$(dirname "$0")"
+    echo "Обновление RealCode..."
+    sleep 2
+    # Закрываем все экземпляры
+    pkill -f RealCode 2>/dev/null || true
+    sleep 1
+    # Заменяем файл
+    cp "{os.path.basename(download_path)}" "{os.path.basename(current_exe)}"
+    chmod +x "{os.path.basename(current_exe)}"
+    rm "{os.path.basename(download_path)}"
+    # Запускаем новую версию
+    "./{os.path.basename(current_exe)}" &
+    rm "$0"
+    """)
+        os.chmod(script_path, 0o755)
+        
+        self.update_dialog.after(0, self.update_dialog.destroy)
+        response = messagebox.askyesno("Обновление загружено!",
+                                    "Обновление загружено успешно! Установить сейчас?")
+        if response:
+            subprocess.Popen(['bash', script_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.app.root.after(100, self.app.on_closing)
+
+    def _install_macos_update(self, download_path):
+        """Установка на macOS"""
+        # Аналогично Linux
+        os.chmod(download_path, 0o755)
+        current_exe = sys.executable
+        
+        script_path = os.path.join(os.path.dirname(current_exe), "update.sh")
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write(f"""#!/bin/bash
+    cd "$(dirname "$0")"
+    echo "Обновление RealCode..."
+    sleep 2
+    pkill -f RealCode 2>/dev/null || true
+    sleep 1
+    cp "{os.path.basename(download_path)}" "{os.path.basename(current_exe)}"
+    chmod +x "{os.path.basename(current_exe)}"
+    rm "{os.path.basename(download_path)}"
+    open "{os.path.basename(current_exe)}"
+    rm "$0"
+    """)
+        os.chmod(script_path, 0o755)
+        
+        self.update_dialog.after(0, self.update_dialog.destroy)
+        response = messagebox.askyesno("Обновление загружено!",
+                                    "Обновление загружено успешно! Установить сейчас?")
+        if response:
+            subprocess.Popen(['bash', script_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.app.root.after(100, self.app.on_closing)
 
     def _update_status(self, text, progress=None):
         if self.status_label:
@@ -1787,6 +1962,21 @@ class CodeEditorApp:
         # Теперь загружаем конфиг и остальное
         self.root = root
         self.config = load_config() 
+
+        if is_linux():
+            try:
+                # Для Linux используем .png иконку
+                icon_paths = ['icon.png', 'icon.svg', 'icon.ico']
+                for path in icon_paths:
+                    if os.path.exists(path):
+                        # Для Tkinter на Linux иконка устанавливается через PhotoImage
+                        from PIL import Image, ImageTk
+                        img = Image.open(path)
+                        photo = ImageTk.PhotoImage(img)
+                        self.root.iconphoto(True, photo)
+                        break
+            except:
+                pass
         
         self._highlight_after_id = None
         self._minimap_after_id = None
@@ -1971,8 +2161,31 @@ class CodeEditorApp:
         self.root.minsize(800, 600)
         self.root.configure(bg=VSColorScheme.BG_DARK)
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Исправление для Linux - проверка на zoomed
         if self.config.get("window_maximized", False):
-            self.root.state('zoomed')
+            try:
+                # Для Windows
+                self.root.state('zoomed')
+            except tk.TclError:
+                try:
+                    # Для Linux (X11)
+                    self.root.attributes('-zoomed', True)
+                except:
+                    try:
+                        # Альтернативный способ для Linux
+                        self.root.state('iconic')
+                        self.root.update()
+                        self.root.state('normal')
+                        # Разворачиваем на весь экран
+                        self.root.geometry(f"{self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}+0+0")
+                    except:
+                        # Если ничего не работает - просто максимизируем
+                        try:
+                            self.root.wm_attributes('-fullscreen', False)
+                            self.root.state('normal')
+                        except:
+                            pass
     
     def _init_discord(self):
         try:
@@ -1995,6 +2208,37 @@ class CodeEditorApp:
     
     def manual_check_updates(self):
         self.updater.check_for_updates(silent=False)
+
+    def _fix_menu_rendering(self):
+        """Исправляет отображение меню на Linux"""
+        if not is_linux():
+            return
+        
+        try:
+            # Способ 1: Принудительная перерисовка
+            self.root.update_idletasks()
+            self.root.tk.call('update', 'idletasks')
+            
+            # Способ 2: Сброс масштабирования
+            self.root.tk.call('tk', 'scaling', 1.0)
+            
+            # Способ 3: Пересоздание меню с задержкой
+            self.root.after(100, self._rebuild_menu)
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка фикса меню: {e}")
+
+    def _rebuild_menu(self):
+        """Пересоздает меню (для исправления отображения)"""
+        try:
+            # Получаем текущее меню
+            current_menu = self.root.cget('menu')
+            if current_menu:
+                # Пересоздаем меню
+                self._create_menu()
+                self.root.update()
+        except Exception as e:
+            print(f"⚠️ Ошибка пересоздания меню: {e}")
     
     # ========== УПРАВЛЕНИЕ ПРОЕКТАМИ ==========
     def load_project(self, path):
@@ -2257,6 +2501,7 @@ class CodeEditorApp:
                 ("C#", "*.cs"),
                 ("Hold C", "*.h"),
                 ("C", "*.c"),
+                ("sh", "*.sh"),
                 ("Все файлы", "*.*")
             ]
         )
@@ -2315,15 +2560,31 @@ class CodeEditorApp:
             self.status_label.config(text=f"Открыта папка: {folder}")
     
     def load_project_tree(self):
+        # Очищаем дерево
         for item in self.file_tree.get_children():
             self.file_tree.delete(item)
+        
         project_root = self.config.get("project_path", ".")
         if not os.path.exists(project_root):
             project_root = "."
+        
         self.folder_label.config(text=os.path.basename(project_root))
         root_name = os.path.basename(os.path.abspath(project_root)) or "Проект"
-        root_node = self.file_tree.insert("", "end", text=f"📁 {root_name}", open=True)
+        
+        # Добавляем корневой узел с правильным отображением
+        root_node = self.file_tree.insert(
+            "", 
+            "end", 
+            text=f"📁 {root_name}", 
+            open=True,
+            values=("",)  # Пустое значение для корня
+        )
+        
+        # Загружаем содержимое
         self._process_directory(project_root, root_node)
+        
+        # Обновляем отображение
+        self.file_tree.update()
     
     def _process_directory(self, path, parent):
         try:
@@ -2331,62 +2592,116 @@ class CodeEditorApp:
             dirs = []
             files = []
             show_hidden = self.config.get("show_hidden_files", False)
+            
             for item in items:
                 if not show_hidden and item.startswith('.'):
                     continue
-                if item in ["__pycache__"]:
+                if item in ["__pycache__", ".git", ".idea", "venv", "node_modules"]:
                     continue
                 full_path = os.path.join(path, item)
                 if os.path.isdir(full_path):
                     dirs.append(item)
                 else:
                     files.append(item)
-            dirs.sort()
-            files.sort()
-            for item in dirs + files:
+            
+            dirs.sort(key=str.lower)
+            files.sort(key=str.lower)
+            
+            for item in dirs:
                 full_path = os.path.join(path, item)
-                if os.path.isdir(full_path):
-                    node = self.file_tree.insert(parent, "end", text=f"📁 {item}", open=False)
-                    self._process_directory(full_path, node)
-                else:
-                    ext = os.path.splitext(item)[1].lower()
-                    icons = {
-                        ".py": "🐍",
-                        ".js": "📜",
-                        ".html": "🌐",
-                        ".css": "🎨",
-                        ".json": "📦",
-                        ".md": "📘",
-                        ".txt": "📝",
-                        ".exe": "⚙️"
-                    }
-                    icon = icons.get(ext, "📄")
-                    self.file_tree.insert(parent, "end", text=f"{icon} {item}", values=(full_path,))
+                # Добавляем папку с правильным тегом
+                node = self.file_tree.insert(
+                    parent, 
+                    "end", 
+                    text=f"📁 {item}", 
+                    open=False,
+                    values=(full_path, "dir")  # Добавляем тип
+                )
+                self._process_directory(full_path, node)
+                self.file_tree.update()  # Обновляем после каждой папки
+            
+            for item in files:
+                full_path = os.path.join(path, item)
+                ext = os.path.splitext(item)[1].lower()
+                icons = {
+                    ".py": "🐍",
+                    ".js": "📜",
+                    ".html": "🌐",
+                    ".css": "🎨",
+                    ".json": "📦",
+                    ".md": "📘",
+                    ".txt": "📝",
+                    ".exe": "⚙️",
+                    ".png": "🖼️",
+                    ".jpg": "🖼️",
+                    ".jpeg": "🖼️",
+                    ".gif": "🖼️",
+                    ".svg": "🖼️",
+                    ".ico": "🖼️",
+                    ".gitignore": "🙈",
+                    ".env": "🔑",
+                    ".pyc": "🐍",
+                    ".pyo": "🐍",
+                    ".so": "📦",
+                    ".dll": "📦",
+                    ".dylib": "📦"
+                }
+                icon = icons.get(ext, "📄")
+                self.file_tree.insert(
+                    parent, 
+                    "end", 
+                    text=f"{icon} {item}", 
+                    values=(full_path, "file")
+                )
+            
+            # Обновляем отображение после обработки
+            self.file_tree.update()
+            
         except Exception as e:
             print(f"Ошибка обхода директории {path}: {e}")
+            import traceback
+            traceback.print_exc()
     
     def on_file_double_click(self, event):
-        if not self.current_project:
-            temp_path = os.path.join(os.path.expanduser("~"), "RealCode_temp")
-            os.makedirs(temp_path, exist_ok=True)
-            self.load_project(temp_path)
         selection = self.file_tree.selection()
         if not selection:
             return
-        values = self.file_tree.item(selection[0], "values")
-        if values:
-            file_path = values[0]
-            if os.path.isfile(file_path):
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    for tab, fname in self.current_project.files.items():
-                        if fname == file_path:
-                            self.select_tab(tab)
-                            return
-                    self.add_new_tab(filename=file_path, content=content)
-                except Exception as e:
-                    messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
+        
+        item = selection[0]
+        values = self.file_tree.item(item, "values")
+        
+        if not values or len(values) < 1:
+            return
+        
+        file_path = values[0]
+        
+        # Проверяем, что это файл, а не папка
+        if os.path.isdir(file_path):
+            # Разворачиваем/сворачиваем папку
+            if self.file_tree.item(item, "open"):
+                self.file_tree.item(item, open=False)
+            else:
+                self.file_tree.item(item, open=True)
+            return
+        
+        # Открываем файл
+        if os.path.isfile(file_path):
+            try:
+                # Проверяем, не открыт ли уже этот файл
+                for tab, fname in self.current_project.files.items():
+                    if fname == file_path:
+                        self.select_tab(tab)
+                        return
+                
+                # Читаем содержимое
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Добавляем новую вкладку
+                self.add_new_tab(filename=file_path, content=content)
+                
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
     
     def on_tree_open(self, event):
         if not self.current_project:
@@ -2398,6 +2713,34 @@ class CodeEditorApp:
                 if values:
                     expanded.append(values[0])
         self.current_project.set_expanded_folders(expanded)
+
+    def refresh_file_tree(self):
+        """Обновляет дерево файлов"""
+        if hasattr(self, 'file_tree'):
+            # Сохраняем раскрытые папки
+            expanded = []
+            def save_expanded(parent=""):
+                for item in self.file_tree.get_children(parent):
+                    if self.file_tree.item(item, "open"):
+                        values = self.file_tree.item(item, "values")
+                        if values and len(values) > 0:
+                            expanded.append(values[0])
+                    save_expanded(item)
+            
+            save_expanded()
+            
+            # Перезагружаем дерево
+            self.load_project_tree()
+            
+            # Восстанавливаем раскрытые папки
+            def restore_expanded(parent=""):
+                for item in self.file_tree.get_children(parent):
+                    values = self.file_tree.item(item, "values")
+                    if values and len(values) > 0 and values[0] in expanded:
+                        self.file_tree.item(item, open=True)
+                        restore_expanded(item)
+            
+            restore_expanded()
     
     # ========== РЕДАКТОР ==========
     def on_key_release(self, event):
@@ -2862,6 +3205,7 @@ class CodeEditorApp:
             self.editor.config(font=(self.config["font_family"], self.config["font_size"]))
     
     def open_settings(self):
+        """Открытие настроек"""
         SettingsDialog(self.root, self.config, self.apply_settings)
     
     def apply_settings(self, new_config):
@@ -2931,11 +3275,109 @@ class CodeEditorApp:
 
         self.status_label.config(text="Настройки применены")
         self.load_project_tree()
+
+    def _bind_tab_shortcuts(self):
+        """Привязка Tab и Shift+Tab в редакторе"""
+        if not self.editor:
+            return
+        
+        try:
+            # Tab - вставляет 4 пробела
+            self.editor.bind('<Tab>', self._on_tab_pressed)
+            # Shift+Tab - удаляет 4 пробела в начале строки
+            self.editor.bind('<Shift-Tab>', self._on_shift_tab_pressed)
+            # Альтернатива для Linux
+            self.editor.bind('<ISO_Left_Tab>', self._on_shift_tab_pressed)
+            print("✅ Tab/Shift+Tab привязаны")
+        except Exception as e:
+            print(f"⚠️ Ошибка привязки Tab: {e}")
+
+    def _on_tab_pressed(self, event):
+        """Tab - вставляет 4 пробела или сдвигает выделенные строки"""
+        try:
+            # Проверяем, есть ли выделение
+            if self.editor.tag_ranges('sel'):
+                # Получаем выделение
+                sel_start = self.editor.index(tk.SEL_FIRST)
+                sel_end = self.editor.index(tk.SEL_LAST)
+                
+                # Определяем строки
+                start_line = int(sel_start.split('.')[0])
+                end_line = int(sel_end.split('.')[0])
+                
+                # Если выделение заканчивается в начале строки, корректируем
+                if int(sel_end.split('.')[1]) == 0 and end_line > start_line:
+                    end_line -= 1
+                
+                # Добавляем 4 пробела в начало каждой строки
+                for line in range(start_line, end_line + 1):
+                    self.editor.insert(f"{line}.0", '    ')
+                
+                # Восстанавливаем выделение
+                self.editor.tag_remove(tk.SEL, "1.0", tk.END)
+                self.editor.tag_add(tk.SEL, f"{start_line}.0", f"{end_line + 1}.0")
+                
+                return "break"
+            else:
+                # Нет выделения - просто вставляем пробелы
+                self.editor.insert(tk.INSERT, '    ')
+                return "break"
+        except Exception as e:
+            print(f"Tab error: {e}")
+            return "break"
+
+    def _on_shift_tab_pressed(self, event):
+        """Shift+Tab - удаляет 4 пробела в начале выделенных строк"""
+        try:
+            if self.editor.tag_ranges('sel'):
+                sel_start = self.editor.index(tk.SEL_FIRST)
+                sel_end = self.editor.index(tk.SEL_LAST)
+                
+                start_line = int(sel_start.split('.')[0])
+                end_line = int(sel_end.split('.')[0])
+                
+                if int(sel_end.split('.')[1]) == 0 and end_line > start_line:
+                    end_line -= 1
+                
+                for line in range(start_line, end_line + 1):
+                    # Проверяем первые 4 символа
+                    text = self.editor.get(f"{line}.0", f"{line}.0+4c")
+                    if text == '    ':
+                        self.editor.delete(f"{line}.0", f"{line}.0+4c")
+                
+                # Восстанавливаем выделение
+                self.editor.tag_remove(tk.SEL, "1.0", tk.END)
+                self.editor.tag_add(tk.SEL, f"{start_line}.0", f"{end_line + 1}.0")
+                
+                return "break"
+            else:
+                # Нет выделения - удаляем 4 пробела в текущей строке
+                line = self.editor.index(tk.INSERT).split('.')[0]
+                text = self.editor.get(f"{line}.0", f"{line}.0+4c")
+                if text == '    ':
+                    self.editor.delete(f"{line}.0", f"{line}.0+4c")
+                return "break"
+        except Exception as e:
+            print(f"Shift+Tab error: {e}")
+            return "break"
     
     # ========== МЕНЮ И ГОРЯЧИЕ КЛАВИШИ ==========
     def _create_menu(self):
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
+        
+        # Настройка меню для предотвращения мерцания
+        menubar.bind('<Enter>', lambda e: self.root.focus_force())
+        menubar.bind('<Motion>', lambda e: self.root.update_idletasks())
+
+        style = ttk.Style()
+        style.theme_use('classic')  # или 'alt'
+        
+        menubar = tk.Menu(self.root, bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG)
+        self.root.config(menu=menubar)
+        
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Файл", menu=file_menu)
         
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Файл", menu=file_menu)
@@ -3003,8 +3445,20 @@ class CodeEditorApp:
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Справка", menu=help_menu)
         help_menu.add_command(label="Проверить обновления", command=self.manual_check_updates)
-        help_menu.add_command(label="О программе", command=self.show_about)
         help_menu.add_command(label="Сообщить о баге", command=self.report_bug)
+        help_menu.add_command(label="О программе", command=self.show_about)
+
+        self.root.update_idletasks()
+        self.root.tk.call('update', 'idletasks')
+        
+        # Для Linux дополнительно:
+        if is_linux():
+            try:
+                # Принудительная перерисовка меню
+                menubar.tk.call('update', 'idletasks')
+                self.root.after(10, lambda: menubar.tk.call('update', 'idletasks'))
+            except:
+                pass
 
     def report_bug(self):
         """Открывает диалог для отправки баг-репорта."""
@@ -3012,51 +3466,143 @@ class CodeEditorApp:
     
     # ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ
     def _bind_global_shortcuts(self):
+        """Горячие клавиши с поддержкой русской раскладки"""
+        
         def handler(event):
             if self._dialog_open:
                 return
-            mod = event.state & 0x0F
-            key = event.keycode
-            ctrl = (mod & 4) != 0
-            shift = (mod & 1) != 0
-            alt = (mod & 8) != 0
-
-            if key == 78 and ctrl and not shift:   # Ctrl+N
-                self.add_new_tab(); return "break"
-            if key == 79 and ctrl and not shift:   # Ctrl+O
-                self.open_file(); return "break"
-            if key == 75 and ctrl and not shift:   # Ctrl+K
-                self.open_folder(); return "break"
-            if key == 83 and ctrl and not shift:   # Ctrl+S
-                self.save_file(); return "break"
-            if key == 83 and ctrl and shift:       # Ctrl+Shift+S
-                self.save_file_as(); return "break"
-            if key == 87 and ctrl and not shift:   # Ctrl+W
-                self.close_current_tab(); return "break"
-            if key == 88 and ctrl and not shift:   # Ctrl+X
-                self.cut(); return "break"
-            if key == 67 and ctrl and not shift:   # Ctrl+C
-                self.copy(); return "break"
-            if key == 86 and ctrl and not shift:   # Ctrl+V
-                self.paste(); return "break"
-            if key == 65 and ctrl and not shift:   # Ctrl+A (выделить всё)
-                self.select_all(); return "break"
-            if key == 70 and ctrl and not shift:   # Ctrl+F
-                self.open_find(); return "break"
-            if key == 71 and ctrl and not shift:   # Ctrl+G
-                self.go_to_line(); return "break"
-            if key == 116 and mod == 0:   # F5
-                self.run_code(); return "break"
-            if key == 112 and mod == 0:   # F1
-                self.open_settings(); return "break"
-            if (key == 187 or key == 61) and ctrl and not shift:  # Ctrl++
-                self.zoom_in(); return "break"
-            if key == 189 and ctrl and not shift:   # Ctrl+-
-                self.zoom_out(); return "break"
-
+            
+            # Получаем символ и модификаторы
+            keysym = event.keysym
+            state = event.state
+            
+            # Проверяем модификаторы
+            ctrl = (state & 0x4) != 0 or (state & 0x40000) != 0
+            shift = (state & 0x1) != 0 or (state & 0x20000) != 0
+            alt = (state & 0x8) != 0 or (state & 0x80000) != 0
+            
+            # Словарь для преобразования русских клавиш в латинские
+            # (только для комбинаций с Ctrl)
+            if ctrl:
+                # Если нажата русская клавиша - конвертируем в латиницу
+                cyrillic_to_latin = {
+                    'Cyrillic_a': 'a', 'Cyrillic_b': 'b', 'Cyrillic_c': 'c',
+                    'Cyrillic_d': 'd', 'Cyrillic_e': 'e', 'Cyrillic_f': 'f',
+                    'Cyrillic_g': 'g', 'Cyrillic_h': 'h', 'Cyrillic_i': 'i',
+                    'Cyrillic_j': 'j', 'Cyrillic_k': 'k', 'Cyrillic_l': 'l',
+                    'Cyrillic_m': 'm', 'Cyrillic_n': 'n', 'Cyrillic_o': 'o',
+                    'Cyrillic_p': 'p', 'Cyrillic_r': 'r', 'Cyrillic_s': 's',
+                    'Cyrillic_t': 't', 'Cyrillic_u': 'u', 'Cyrillic_v': 'v',
+                    'Cyrillic_w': 'w', 'Cyrillic_x': 'x', 'Cyrillic_y': 'y',
+                    'Cyrillic_z': 'z',
+                    # Заглавные
+                    'Cyrillic_A': 'a', 'Cyrillic_B': 'b', 'Cyrillic_C': 'c',
+                    'Cyrillic_D': 'd', 'Cyrillic_E': 'e', 'Cyrillic_F': 'f',
+                    'Cyrillic_G': 'g', 'Cyrillic_H': 'h', 'Cyrillic_I': 'i',
+                    'Cyrillic_J': 'j', 'Cyrillic_K': 'k', 'Cyrillic_L': 'l',
+                    'Cyrillic_M': 'm', 'Cyrillic_N': 'n', 'Cyrillic_O': 'o',
+                    'Cyrillic_P': 'p', 'Cyrillic_R': 'r', 'Cyrillic_S': 's',
+                    'Cyrillic_T': 't', 'Cyrillic_U': 'u', 'Cyrillic_V': 'v',
+                    'Cyrillic_W': 'w', 'Cyrillic_X': 'x', 'Cyrillic_Y': 'y',
+                    'Cyrillic_Z': 'z'
+                }
+                
+                # Если это русская клавиша - заменяем на латинскую
+                if keysym in cyrillic_to_latin:
+                    keysym = cyrillic_to_latin[keysym]
+            
+            # Обработка специальных клавиш (F1, F5 и т.д.)
+            if keysym == 'F5' and not ctrl and not alt and not shift:
+                self.run_code()
+                return "break"
+            
+            if keysym == 'F1' and not ctrl and not alt and not shift:
+                self.open_settings()
+                return "break"
+            
+            # Ctrl+комбинации (с поддержкой русских клавиш)
+            if ctrl and not alt:
+                # Новый файл (Ctrl+N)
+                if keysym in ['n', 'N']:
+                    self.add_new_tab()
+                    return "break"
+                
+                # Открыть (Ctrl+O)
+                if keysym in ['o', 'O']:
+                    self.open_file()
+                    return "break"
+                
+                # Открыть папку (Ctrl+K)
+                if keysym in ['k', 'K']:
+                    self.open_folder()
+                    return "break"
+                
+                # Сохранить (Ctrl+S)
+                if keysym in ['s', 'S']:
+                    if shift:
+                        self.save_file_as()
+                    else:
+                        self.save_file()
+                    return "break"
+                
+                # Закрыть вкладку (Ctrl+W)
+                if keysym in ['w', 'W']:
+                    self.close_current_tab()
+                    return "break"
+                
+                # Вырезать (Ctrl+X)
+                if keysym in ['x', 'X']:
+                    self.cut()
+                    return "break"
+                
+                # Копировать (Ctrl+C)
+                if keysym in ['c', 'C']:
+                    self.copy()
+                    return "break"
+                
+                # Вставить (Ctrl+V)
+                if keysym in ['v', 'V']:
+                    self.paste()
+                    return "break"
+                
+                # Выделить всё (Ctrl+A)
+                if keysym in ['a', 'A']:
+                    self.select_all()
+                    return "break"
+                
+                # Найти (Ctrl+F)
+                if keysym in ['f', 'F']:
+                    self.open_find()
+                    return "break"
+                
+                # Перейти к строке (Ctrl+G)
+                if keysym in ['g', 'G']:
+                    self.go_to_line()
+                    return "break"
+                
+                # Запуск (Ctrl+R) - альтернатива F5
+                if keysym in ['r', 'R']:
+                    self.run_code()
+                    return "break"
+                
+                # Увеличение шрифта (Ctrl+Plus/Ctrl+=)
+                if keysym in ['plus', 'equal', 'KP_Add']:
+                    self.zoom_in()
+                    return "break"
+                
+                # Уменьшение шрифта (Ctrl+Minus)
+                if keysym in ['minus', 'KP_Subtract']:
+                    self.zoom_out()
+                    return "break"
+        
+        # Привязываем обработчик
         self.root.bind_all('<Key>', handler)
+        
+        # Дополнительно привязываем к редактору
         if self.editor:
-            self.editor.bind('<Key>', handler)
+            self.editor.bind_all('<Key>', handler)
+        
+        print("✅ Горячие клавиши настроены (с поддержкой русского языка)")
     
     # ========== ДИАЛОГИ ==========
     def show_about(self):
@@ -3081,6 +3627,8 @@ class CodeEditorApp:
 • Экран приветствия
 • Настраиваемые панели
 • Горячие клавиши
+
+Также, я начал поддерживать Linux подобные системы, но система не доработана. Поэтому, если вы заметите баги, то напишите мне, буду благодарен.
 
 © 2026 RealCode
         """
@@ -3148,6 +3696,7 @@ class CodeEditorApp:
         self.explorer_frame = tk.Frame(self.main_paned, bg=VSColorScheme.BG_MEDIUM)
         explorer_header = tk.Frame(self.explorer_frame, bg=VSColorScheme.BG_MEDIUM)
         explorer_header.pack(fill=tk.X, padx=5, pady=5)
+        
         tk.Label(
             explorer_header,
             text="ПРОВОДНИК",
@@ -3155,6 +3704,7 @@ class CodeEditorApp:
             fg=VSColorScheme.FG_LIGHT,
             font=("Segoe UI", 9, "bold")
         ).pack(side=tk.LEFT)
+        
         close_explorer_btn = tk.Label(
             explorer_header,
             text="✕",
@@ -3168,6 +3718,7 @@ class CodeEditorApp:
         close_explorer_btn.bind('<Enter>', lambda e: close_explorer_btn.configure(bg=VSColorScheme.ACCENT))
         close_explorer_btn.bind('<Leave>', lambda e: close_explorer_btn.configure(bg=VSColorScheme.BG_MEDIUM))
         close_explorer_btn.bind('<Button-1>', lambda e: self.toggle_explorer())
+        
         self.folder_label = tk.Label(
             self.explorer_frame,
             text=os.path.basename(self.config["project_path"]),
@@ -3177,8 +3728,10 @@ class CodeEditorApp:
             wraplength=230
         )
         self.folder_label.pack(anchor="w", padx=5, pady=(0, 5))
+        
         btn_frame = tk.Frame(self.explorer_frame, bg=VSColorScheme.BG_MEDIUM)
         btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
         open_folder_btn = tk.Label(
             btn_frame,
             text="📂 Открыть папку",
@@ -3190,6 +3743,7 @@ class CodeEditorApp:
         )
         open_folder_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
         open_folder_btn.bind('<Button-1>', lambda e: self.open_folder())
+        
         refresh_btn = tk.Label(
             btn_frame,
             text="↻",
@@ -3203,28 +3757,58 @@ class CodeEditorApp:
         refresh_btn.pack(side=tk.RIGHT, padx=(2, 0))
         refresh_btn.bind('<Button-1>', lambda e: self.load_project_tree())
         
+        # ИСПРАВЛЕНИЕ: Создаем Treeview с правильными настройками
         self.file_tree = ttk.Treeview(
             self.explorer_frame,
-            show="tree",
-            selectmode="browse"
+            show="tree",  # Показываем только дерево
+            selectmode="browse",
+            height=20  # Высота в строках
         )
+        
+        # Настройка стилей для Treeview
         style = ttk.Style()
         style.theme_use("clam")
+        
+        # Настройка цветов
         style.configure(
             "Treeview",
             background=VSColorScheme.BG_LIGHT,
             foreground=VSColorScheme.FG,
             fieldbackground=VSColorScheme.BG_LIGHT,
-            borderwidth=0
+            borderwidth=0,
+            rowheight=25  # Высота строки для лучшей читаемости
         )
+        
+        # Настройка выделения
         style.map(
             "Treeview",
-            background=[("selected", VSColorScheme.SELECTION)]
+            background=[("selected", VSColorScheme.SELECTION)],
+            foreground=[("selected", "white")]
         )
+        
+        # Настройка заголовков (скрываем)
+        style.configure(
+            "Treeview.Heading",
+            background=VSColorScheme.BG_MEDIUM,
+            foreground=VSColorScheme.FG,
+            relief="flat"
+        )
+        
         self.file_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Привязываем события
         self.file_tree.bind("<Double-1>", self.on_file_double_click)
         self.file_tree.bind("<<TreeviewOpen>>", self.on_tree_open)
-    
+        
+        # Добавляем прокрутку (опционально)
+        scrollbar = ttk.Scrollbar(
+            self.explorer_frame,
+            orient=tk.VERTICAL,
+            command=self.file_tree.yview
+        )
+        self.file_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
     def _create_center_panel(self):
         self.center_paned = tk.PanedWindow(
             self.main_paned,
@@ -3292,6 +3876,8 @@ class CodeEditorApp:
             tabs=(self.config["tab_size"] * 10,)
         )
         self.editor.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._bind_tab_shortcuts()
 
         # Привязываем line_numbers к редактору
         self.line_numbers.text_widget = self.editor
@@ -3506,7 +4092,7 @@ class FindDialog:
         self.dialog.geometry("400x150")
         self.dialog.configure(bg=VSColorScheme.BG_MEDIUM)
         self.dialog.transient(self.parent)
-        self.dialog.grab_set()
+        # self.dialog.grab_set()
         self.dialog.protocol("WM_DELETE_WINDOW", self._on_close)
         # Сброс флага при любом уничтожении
         self.dialog.bind('<Destroy>', lambda e: setattr(self.app, '_dialog_open', False))
@@ -3945,14 +4531,24 @@ class BugReportDialog:
         self.window = None
         self._show()
 
+    def _set_grab(self):
+        """Безопасный захват фокуса после отображения окна"""
+        try:
+            if self.window and self.window.winfo_exists():
+                self.window.grab_set()
+                self.window.focus_force()
+        except Exception as e:
+            print(f"⚠️ Ошибка захвата фокуса: {e}")
+
     def _show(self):
         self.window = tk.Toplevel(self.parent)
         self.window.title("Создание баг-репорта...")
         self.window.geometry("450x400")
         self.window.configure(bg=VSColorScheme.BG_MEDIUM)
         self.window.transient(self.parent)
-        self.window.grab_set()
         self.window.resizable(False, False)
+        self.window.update_idletasks()
+        self.window.after(100, self._set_grab)
 
         tk.Label(
             self.window,
@@ -4298,7 +4894,8 @@ class PluginMarketplaceDialog:
         self.window.geometry("700x500")
         self.window.configure(bg=VSColorScheme.BG_MEDIUM)
         self.window.transient(self.parent)
-        self.window.grab_set()
+        self.window.focus_force()
+        self.window.lift()
         self.window.resizable(True, True)
 
         # Заголовок
