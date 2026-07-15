@@ -46,13 +46,21 @@
 
 ## Пример кода config.py
 DISCORD_ID_CONFIG = "123456789012345678"
+
 VERSION_REALCODE = "3.7.0"
+
 DOWNLOAD_URL = "https://github.com/Kish-Mish122/RealCode/releases/latest"
+
 GITHUB_VERSION_URL_CONFIG = "https://api.github.com/"
+
 GITHUB_VERSION_MIN = "https://github.com"
+
 GITHUB_TOKEN = "TOKEN_GITHUB"
+
 FORMSPREE_ID = "https://formspree.io/f/your_form_id"
+
 MIN_REALCODE_VERSION = "3.4.0"
+
 PLUGIN_URL_CONF = "https://raw.githubusercontent.com/Kish-Mish122/RealCode-plugins/main/plugins.json"
 
 
