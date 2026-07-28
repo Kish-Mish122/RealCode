@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import os
 import sys
 import subprocess
@@ -7,9 +10,9 @@ import shutil
 from datetime import datetime
 
 def backup_main_py():
-    """Создание резервной копии main.py перед сборкой"""
+    """Create backup of main.py before build"""
     if not os.path.exists("main.py"):
-        print("⚠️ main.py не найден, пропускаю бэкап")
+        print("[WARN] main.py not found, skipping backup")
         return False
     
     # Проверка, что main.py не бинарный (нет нулевых байтов)
@@ -35,175 +38,105 @@ def backup_main_py():
     
     try:
         shutil.copy2("main.py", backup_path)
-        print(f"Создана резервная копия: {backup_path}")
+        print(f"[OK] Backup created: {backup_path}")
         return True
     except Exception as e:
-        print(f"Не удалось создать бэкап: {e}")
+        print(f"[ERROR] Failed to create backup: {e}")
         return False
 
 def check_windows():
     if os.name != 'nt':
-        print("Ошибка компиляции! Требуется Windows не менее 7")
+        print("[ERROR] Build failed! Windows required")
         sys.exit(1)
-    else:
-        print("Компиляция: Система: Windows")
-        main()
-
-def force_remove(path):
-    """Принудительное удаление файла/папки"""
-    try:
-            if os.path.isfile(path):
-                os.chmod(path, 0o777)
-                os.remove(path)
-                return True
-            elif os.path.isdir(path):
-                import stat
-                import shutil
-            
-            for root, dirs, files in os.walk(path):
-                for file in files:
-                    try:
-                        file_path = os.path.join(root, file)
-                        os.chmod(file_path, 0o777)
-                    except:
-                        pass
-            
-            shutil.rmtree(path, ignore_errors=True)
-            
-            if not os.path.exists(path):
-                return True
-            
-            try:
-                subprocess.run(f'rmdir /s /q "{path}"', shell=True, capture_output=True)
-            except:
-                pass
-            
-            return not os.path.exists(path)
-    except:
-        pass
-    return False
+    
+    print("=" * 60)
+    print("               RealCode Builder v3.2")
+    print("=" * 60)
+    print()
+    
+    main()
 
 def cleanup_before_build():
     """Очистка перед сборкой"""
-    print("\nОчистка перед сборкой...")
+    print("[INFO] Cleaning before build...")
     
-    time.sleep(1)
-    
-    # Папки для удаления (НО НЕ трогаем текущую папку с файлами)
     dirs_to_remove = ["build", "__pycache__"]
-    
-    # Файлы для удаления (НО НЕ settings.json и НЕ version_info.txt)
     files_to_remove = ["RealCode.spec"]
     
-    # НЕ УДАЛЯЕМ dist - там может быть старый exe, но его можно перезаписать
-    
-    # Удаляем папки
     for dir_name in dirs_to_remove:
         if os.path.exists(dir_name):
-            print(f"  Удаляю {dir_name}...")
             try:
-                import shutil
                 shutil.rmtree(dir_name, ignore_errors=True)
-                time.sleep(0.5)
-                print(f"    {dir_name} удален")
-            except:
-                if force_remove(dir_name):
-                    print(f"    {dir_name} удален")
-                else:
-                    print(f"    Не удалось удалить {dir_name}")
+                print(f"   [OK] {dir_name} deleted")
+            except Exception as e:
+                print(f"   [WARN] {dir_name} not deleted: {e}")
     
-    # Удаляем файлы
     for file_name in files_to_remove:
         if os.path.exists(file_name):
-            print(f"  Удаляю {file_name}...")
             try:
                 os.remove(file_name)
-                print(f"    {file_name} удален")
-            except:
-                pass
+                print(f"   [OK] {file_name} deleted")
+            except Exception as e:
+                print(f"   [WARN] {file_name} not deleted: {e}")
 
 def cleanup_after_build():
     """Очистка после сборки"""
-    print("\nОчистка временных файлов...")
+    print("\n[INFO] Cleaning temporary files...")
     
-    # Удаляем только временные файлы
     temp_patterns = ["*.log", "*.tmp", "*.pyc", "*.pyo"]
     dirs_to_remove = ["build", "__pycache__"]
     
-    # Удаляем временные файлы
     for pattern in temp_patterns:
         for file_path in glob.glob(pattern):
             try:
                 os.remove(file_path)
-                print(f"  Удаляю {file_path}... ")
             except:
                 pass
     
-    # Удаляем папку build
     for dir_name in dirs_to_remove:
         if os.path.exists(dir_name):
             try:
-                import shutil
                 shutil.rmtree(dir_name, ignore_errors=True)
-                print(f"  Удаляю {dir_name}... ")
             except:
                 pass
 
 def main():
     print("=" * 60)
-    print("               RealCode Builder v3.1")
+    print("               RealCode Builder v3.2")
     print("=" * 60)
     print()
     
-    # Проверяем PyInstaller
     try:
         import PyInstaller
-        print("PyInstaller найден")
+        print("[OK] PyInstaller found")
     except ImportError:
-        print("PyInstaller не установлен!")
-        print("\nУстановить: pip install pyinstaller")
+        print("[ERROR] PyInstaller not installed!")
+        print("   Install: pip install pyinstaller")
+        return
 
     icon_path = "icon.ico"
     if not os.path.exists(icon_path):
-        print("Файл icon.ico не найден!")
-        print("\nСоздайте иконку и сохраните её как 'icon.ico' в папке:")
-        print(f"   {os.getcwd()}")
-        print("\nИли скачайте пример иконки и переименуйте в icon.ico")
-        input("\nНажмите Enter для выхода...")
-        return
-    else:
-        print(f"Иконка найдена: {icon_path}")
-        # Показываем размер иконки
-        size = os.path.getsize(icon_path)
-        print(f"   Размер: {size} байт")
-
-        if not os.path.exists("main.py"):
-            print("Файл main.py не найден!")
-            input("\nНажмите Enter для выхода...")
-            return
-
-    # Создаём бэкап и проверяем целостность
-    if not backup_main_py():
-        print("❌ Сборка прервана из-за проблем с main.py")
-        input("\nНажмите Enter для выхода...")
+        print("[ERROR] icon.ico not found!")
+        print(f"   Path: {os.getcwd()}")
         return
     
-    # Проверяем main.py
+    print(f"[OK] Icon found: {icon_path}")
+    size = os.path.getsize(icon_path)
+    print(f"   Size: {size} bytes")
+
     if not os.path.exists("main.py"):
-        print("Файл main.py не найден!")
-        input("\nНажмите Enter для выхода...")
+        print("[ERROR] main.py not found!")
         return
     
     if os.path.exists("settings.json"):
-        print("settings.json найден (будет сохранен)")
-    
-    # Создаем version_info.txt
-    print("\nСоздание version_info.txt...")
+        print("[OK] settings.json found (will be saved)")
+
+    print("\n[INFO] Creating version_info.txt...")
     version_info = """# UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 9, 0, 0),
-    prodvers=(2, 9, 0, 0),
+    filevers=(3, 7, 0, 0),
+    prodvers=(3, 7, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -233,18 +166,16 @@ VSVersionInfo(
     try:
         with open("version_info.txt", "w", encoding="utf-8") as f:
             f.write(version_info)
-        print("version_info.txt создан")
+        print("[OK] version_info.txt created")
     except Exception as e:
-        print(f"Ошибка создания version_info.txt: {e}")
-        input("\nНажмите Enter для выхода...")
+        print(f"[ERROR] Error creating version_info.txt: {e}")
         return
     
-    # Очистка перед сборкой
+    print("\n[INFO] Cleaning before build...")
     cleanup_before_build()
     
-    print("\nНачинаю сборку...\n")
+    print("\n[INFO] Starting build...\n")
     
-    # Базовая команда
     cmd = [
         "pyinstaller",
         "--windowed",
@@ -252,74 +183,63 @@ VSVersionInfo(
         "--name=RealCode",
         "--noconfirm",
         "--clean",
+        f"--icon={icon_path}",
+        f"--add-data={icon_path};.",
+        "--version-file=version_info.txt",
         "main.py"
     ]
-    
-    # Добавляем иконку (ОБЯЗАТЕЛЬНО)
-    cmd.insert(3, f"--icon={icon_path}")
-    cmd.insert(4, f"--add-data={icon_path};.")
-    
-    # Добавляем версионную информацию
-    cmd.insert(3, "--version-file=version_info.txt")
     
     print("Команда сборки:")
     print("  " + " ".join(cmd))
     print()
     
-    # Запуск сборки
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
         if result.returncode == 0:
             print("\n" + "=" * 60)
-            print("СБОРКА УСПЕШНО ЗАВЕРШЕНА!")
+            print("[SUCCESS] BUILD COMPLETED!")
             print("=" * 60)
             
             exe_path = "dist\\RealCode.exe"
             if os.path.exists(exe_path):
                 size = os.path.getsize(exe_path)
-                print(f"\nФайл: {exe_path}")
-                print(f"Размер: {size:,} байт ({size/1024/1024:.2f} MB)")
+                print(f"\n[FILE] File: {exe_path}")
+                print(f"[SIZE] Size: {size:,} bytes ({size/1024/1024:.2f} MB)")
                 
-                # Проверяем, что иконка встроена
-                print("\nПроверка иконки:")
-                print("   Иконка должна быть видна в проводнике")
-                print("   Если нет - проверьте формат icon.ico")
-                
-                # Копируем в текущую папку
                 try:
-                    import shutil
                     from datetime import datetime
                     date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                     backup_name = f"RealCode_{date_str}.exe"
                     shutil.copy2(exe_path, backup_name)
-                    print(f"\nРезервная копия: {backup_name}")
+                    print(f"[BACKUP] Backup: {backup_name}")
                 except Exception as e:
-                    print(f"Не удалось создать копию: {e}")
+                    print(f"[WARN] Failed to create backup: {e}")
             else:
-                print("\nФайл не найден после сборки!")
+                print("[ERROR] File not found after build!")
             
-            # Очистка после сборки
             cleanup_after_build()
             
         else:
             print("\n" + "=" * 60)
-            print("ОШИБКА ПРИ СБОРКЕ!")
+            print("[ERROR] BUILD FAILED!")
             print("=" * 60)
-            print(f"\nКод ошибки: {result.returncode}")
-            print("\nВывод ошибки:")
+            print(f"\n[ERROR] Return code: {result.returncode}")
+            print("\n[ERROR] Error output:")
             print(result.stderr)
     
+    except subprocess.TimeoutExpired:
+        print("[ERROR] Build timeout exceeded!")
     except Exception as e:
-        print(f"\nОшибка выполнения: {e}")
+        print(f"[ERROR] Execution error: {e}")
     
     print("\n" + "=" * 60)
-    print("ВАЖНЫЕ ФАЙЛЫ СОХРАНЕНЫ:")
-    print("   - settings.json (настройки)")
-    print("   - icon.ico (иконка)")
-    print("   - main.py (исходный код)")
+    print("[INFO] IMPORTANT FILES SAVED:")
+    print("   - settings.json (settings)")
+    print("   - icon.ico (icon)")
+    print("   - main.py (source code)")
     print("=" * 60)
-    input("\nНажмите Enter для выхода...")
+    input("\nPress Enter to exit...")
 
 if __name__ == "__main__":
     check_windows()
