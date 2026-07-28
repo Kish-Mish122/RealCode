@@ -17,3 +17,4 @@ light-theme/
 plugins/
 RealCodeBuild/
 *.zip
+*.AppImage
