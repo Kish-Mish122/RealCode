@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # main.py - RealCode
-# Кроссплатформенная версия (Windows + Linux + macOS)
+# Кроссплатформенная версия (Windows + Linux + macOS (coming soon))
 
 import site
 import subprocess
@@ -48,7 +48,7 @@ sys.stderr = StringIO()
 
 
 # =====================================================================
-# ПЛАТФОРМЕННЫЕ ХЕЛПЕРЫselect_tab
+# ПЛАТФОРМЕННЫЕ ХЕЛПЕРЫ
 # =====================================================================
 
 def get_os_type():
@@ -63,14 +63,17 @@ def get_os_type():
 
 def is_windows() -> bool:
     return sys.platform == 'win32'
+    print("Платформа: Windows")
 
 
 def is_linux() -> bool:
     return sys.platform.startswith('linux')
+    print("Платформа: Linux")
 
 
 def is_macos() -> bool:
     return sys.platform == 'darwin'
+    print("Платформа: MacOS. Поддержка не гарантируется")
 
 
 def get_app_dir():
@@ -1156,7 +1159,7 @@ class SettingsDialog:
             ("wrap_var", "word_wrap", False, "Перенос строк"),
             ("highlight_var", "syntax_highlight", True, "Подсветка синтаксиса"),
             ("minimap_var", "minimap_enabled", True, "Показывать миникарту"),
-            ("hidden_var", "show_hidden_files", False, "Показывать скрытые файлы"),
+            ("hidden_var", "show_hidden_files", False, "Показывать скрытые файлы (Например: .git, .env и подобные)"),
         ]:
             var = tk.BooleanVar(value=self.config.get(key, default))
             setattr(self, vn, var)
@@ -1297,10 +1300,10 @@ class DiscordPresence:
 
     def _get_file_info(self):
         if not self.app.current_project or not self.app.current_project.current_tab:
-            return "Без имени", "unknown"
+            return "Безымянный", "unknown"
         filename = self.app.current_project.files.get(self.app.current_project.current_tab)
         if not filename:
-            return "Без имени", "unknown"
+            return "Безымянный", "unknown"
         name = os.path.basename(filename)
         ext = os.path.splitext(name)[1].lower()
         ext_map = {'.py': 'python', '.js': 'javascript', '.jsx': 'javascript',
@@ -1317,15 +1320,13 @@ class DiscordPresence:
             filename, file_type = self._get_file_info()
             project_name = "Безымянный проект" if not self.app.current_project else self.app.current_project.name
             files_count = len(self.app.current_project.tabs) if self.app.current_project else 0
-            state_text = {"editing": "Редактирует код",
-                          "running": "Запустил выполнение кода",
-                          "idle": "Отошёл"}.get(self.current_state, "Редактирует код")
+            state_text = {"editing": "Пишет код...",
+                          "running": "Выполняет код",
+                          "idle": "Не за компьютером"}.get(self.current_state, "Пишет код...")
             details = f"{filename} • {project_name}"
             buttons = [
                 {"label": "RealCode in GitLab", "url": "https://gitlab.com/K1sh-M1sh/RealCode"},
-                {"label": "Download RealCode", "url": "https://gitlab.com/K1sh-M1sh/RealCode/-/releases/"},
-                {"label": "Following Creator on GitHub", "url": "https://github.com/Kish-Mish122"},
-                {"label": "Following Creator on GitLab", "url": "https://gitlab.com/K1sh-M1sh"},
+                {"label": "Download RealCode", "url": "https://gitlab.com/K1sh-M1sh/RealCode/-/releases/"}
             ]
             self.rpc.update(state=state_text, details=details, start=self.start_time,
                             large_image="realcode_logo",
@@ -1607,7 +1608,7 @@ del /f /q "%~f0"
 """)
         if self.update_dialog and self.update_dialog.winfo_exists():
             self.update_dialog.after(0, self.update_dialog.destroy)
-        response = messagebox.askyesno("Обновление загружено!",
+        response = messagebox.askyesno("Обновление загружено на диск!",
                                        "Обновление загружено успешно! Установить сейчас?")
         if response:
             try:
@@ -1947,7 +1948,7 @@ class Linter:
 
 
 # =====================================================================
-# BUG REPORT
+# GIT ДИАЛОГИ
 # =====================================================================
 
 class GitCommitDialog:
@@ -1962,16 +1963,16 @@ class GitCommitDialog:
 
     def _status_label(self, s: str) -> str:
         return {
-            'M': 'изменён', 'MM': 'изменён', 'A': 'новый',
-            'AM': 'новый+', 'D': 'удалён', 'R': 'переимен.',
-            '??': 'не отслеж.', 'C': 'копия',
+            'M': 'Редактирован', 'MM': 'Редактирован', 'A': 'Новый',
+            'AM': 'Новый+', 'D': 'Удалён', 'R': 'Переимен.',
+            '??': 'Не отслеж.', 'C': 'Копия',
         }.get(s, s)
 
     def _show(self):
         ui = get_default_ui_font()
         self.window = tk.Toplevel(self.parent)
-        self.window.title("Git: Commit")
-        self.window.geometry("640x520")
+        self.window.title("Git: Коммит")
+        self.window.geometry("640x620")
         self.window.configure(bg=VSColorScheme.BG_MEDIUM)
         self.window.transient(self.parent)
 
@@ -2011,7 +2012,7 @@ class GitCommitDialog:
 
         bf = tk.Frame(self.window, bg=VSColorScheme.BG_MEDIUM)
         bf.pack(pady=15)
-        tk.Button(bf, text="Зафиксировать", command=self._commit,
+        tk.Button(bf, text="Закоммитить", command=self._commit,
                   bg=VSColorScheme.BUTTON_BG, fg="white", relief=tk.FLAT,
                   padx=20, pady=6, cursor="hand2").pack(side=tk.LEFT, padx=5)
         tk.Button(bf, text="Отмена", command=self.window.destroy,
@@ -2036,7 +2037,7 @@ class GitCommitDialog:
     def _commit(self):
         message = self.msg.get("1.0", tk.END).strip()
         if not message:
-            messagebox.showwarning("Git", "Введите сообщение коммита.")
+            messagebox.showwarning("Git", "Поле для сообщения о коммите - обязательна!")
             return
         selected = [p for p, c in self.checked.items() if c]
         if not selected:
@@ -2087,6 +2088,11 @@ class GitLogDialog:
                   bg=VSColorScheme.BG_LIGHT, fg=VSColorScheme.FG,
                   relief=tk.FLAT, padx=20, pady=5).pack(pady=10)
 
+
+# =====================================================================
+# BUG REPORT
+# =====================================================================
+
 class BugReportDialog:
     def __init__(self, parent, app):
         self._ui = get_default_ui_font()
@@ -2107,7 +2113,7 @@ class BugReportDialog:
         ui = self._ui
         self.window = tk.Toplevel(self.parent)
         self.window.title("Создание баг-репорта...")
-        self.window.geometry("450x400")
+        self.window.geometry("530x400")
         self.window.configure(bg=VSColorScheme.BG_MEDIUM)
         self.window.transient(self.parent)
         self.window.resizable(False, False)
@@ -2126,7 +2132,7 @@ class BugReportDialog:
         ne.pack(padx=30, pady=5)
         ne.focus()
 
-        tk.Label(self.window, text="Email (для связи с вами):",
+        tk.Label(self.window, text="Email (для связи с вами, обязательно):",
                  bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG,
                  font=(ui, 10)).pack(anchor="w", padx=30, pady=(10, 0))
         self.email_var = tk.StringVar()
@@ -2134,7 +2140,7 @@ class BugReportDialog:
                  fg=VSColorScheme.FG, insertbackground=VSColorScheme.FG,
                  font=(ui, 10), width=40).pack(padx=30, pady=5)
 
-        tk.Label(self.window, text="Описание проблемы:", bg=VSColorScheme.BG_MEDIUM,
+        tk.Label(self.window, text="Описание проблемы (как воспроизвести, что не так):", bg=VSColorScheme.BG_MEDIUM,
                  fg=VSColorScheme.FG, font=(ui, 10)).pack(anchor="w", padx=30, pady=(10, 0))
         self.message_text = tk.Text(self.window, bg=VSColorScheme.BG_LIGHT,
                                     fg=VSColorScheme.FG,
@@ -2160,9 +2166,9 @@ class BugReportDialog:
 
     def _send_report(self, message):
         if not message:
-            messagebox.showwarning("Опишите проблему", "Опишите вашу проблему подробнее")
+            messagebox.showwarning("Описание проблемы", "Опишите вашу проблему подробнее")
             return
-        name = self.name_var.get().strip() or "Аноним"
+        name = self.name_var.get().strip()
         email = self.email_var.get().strip()
         if email and not self._is_valid_email(email):
             messagebox.showwarning("Невалидный email", "Пожалуйста, введите корректный email.")
@@ -2339,7 +2345,7 @@ class PluginMarketplaceDialog:
         ui = get_default_ui_font()
         self.window = tk.Toplevel(self.parent)
         self.window.title("Маркетплейс плагинов")
-        self.window.geometry("700x500")
+        self.window.geometry("700x550")
         self.window.configure(bg=VSColorScheme.BG_MEDIUM)
         self.window.transient(self.parent)
         self.window.focus_force()
@@ -2554,7 +2560,7 @@ class CodeEditorApp:
         self.highlighter = None
         self.linter = None
         self._dialog_open = False
-        self.git: GitManager | None = None
+        self.git = None
 
         self.app_dir = get_app_dir()
         ensure_directories(self.app_dir)
@@ -2570,6 +2576,10 @@ class CodeEditorApp:
         self._minimap_scroll_id = None
         self.auto_save_timer = None
 
+        # Флаги для авто-скрытия скроллбара вкладок
+        self._tabs_update_scheduled = False
+        self._tabs_scrollbar_visible = False
+
         self.line_numbers = None
         self.minimap = None
         self.editor = None
@@ -2584,9 +2594,13 @@ class CodeEditorApp:
         self.editor_area = None
         self.console_area = None
         self.tabs_container = None
+        self.tabs_canvas = None
+        self.tabs_container_id = None
+        self.tabs_scrollbar = None
         self.tab_bar = None
         self.status_label = None
         self.pos_label = None
+        self.git_label = None
         self.console_scrollbar = None
         self.editor_container = None
         self.toolbar = None
@@ -2619,14 +2633,15 @@ class CodeEditorApp:
         # Применяем сохранённые размеры панелей после отрисовки окна
         self.root.after(150, self._apply_saved_pane_sizes)
         threading.Thread(target=self._check_updates_thread, daemon=True).start()
+        # Автосохранение размеров панелей при движении саша
+        self.main_paned.bind("<ButtonRelease-1>", self._autosave_pane_sizes)
+        self.center_paned.bind("<ButtonRelease-1>", self._autosave_pane_sizes)
         print("Привет, Юзер! Удачного кодинга!")
 
     def _is_dialog_focused(self) -> bool:
         try:
             focused = self.root.focus_get()
             if focused is None:
-                # Нет фокуса — вероятно, приложение свёрнуто/неактивно,
-                # но если есть видимые Toplevel — считаем, что диалог открыт
                 for w in self.root.winfo_children():
                     if isinstance(w, tk.Toplevel) and w.winfo_viewable():
                         return True
@@ -2639,7 +2654,6 @@ class CodeEditorApp:
     # GIT
     # ------------------------------------------------------------------
     def _init_git_for_project(self):
-        """Создаёт GitManager и обновляет индикаторы."""
         if not self.current_project:
             self.git = None
             self._update_git_label()
@@ -2648,14 +2662,10 @@ class CodeEditorApp:
         self._refresh_git_status()
 
     def _refresh_git_status(self):
-        """Перечитывает статус git и обновляет метки."""
         self._update_git_label()
         self._apply_git_indicators_to_tree()
-        # Покажем в консоли (только при явном запросе, чтобы не спамить)
-        # self.log(...)
 
     def _update_git_label(self):
-        """Обновляет метку branch/clean в статусбаре."""
         if not hasattr(self, 'git_label') or not self.git_label:
             return
         if not self.git:
@@ -2672,13 +2682,12 @@ class CodeEditorApp:
         branch = self.git.current_branch() or "?"
         files = self.git.status()
         if not files:
-            bg, mark = "#1b5e20", "✓"     # зелёная — чисто
+            bg, mark = "#1b5e20", "✓"
         else:
-            bg, mark = "#a05a00", f"±{len(files)}"  # оранжевая — есть изменения
+            bg, mark = "#a05a00", f"±{len(files)}"
         self.git_label.config(text=f"⎇ {branch}  {mark}", bg=bg, fg="white")
 
     def _apply_git_indicators_to_tree(self):
-        """Проставляет маркеры M/A/U/D к элементам дерева файлов."""
         if not self.file_tree or not self.git or not self.git.is_repo():
             return
         statuses = {s.path.replace('/', os.sep): s for s in self.git.status()}
@@ -2696,7 +2705,6 @@ class CodeEditorApp:
                     except Exception:
                         rel = full_path
                     gs = statuses.get(rel) or statuses.get(rel.replace(os.sep, '/'))
-                    # базовое имя без префиксного эмодзи
                     base = os.path.basename(full_path)
                     ext = os.path.splitext(base)[1].lower()
                     icons = {".py": "🐍", ".js": "📜", ".html": "🌐", ".css": "🎨",
@@ -2716,7 +2724,6 @@ class CodeEditorApp:
 
         walk()
 
-    # ---- Команды меню ----
     def git_init(self):
         self._ensure_project()
         if not self.git:
@@ -2725,7 +2732,7 @@ class CodeEditorApp:
         if out is None:
             messagebox.showerror("git init", err)
             return
-        self.log("✅ Git-репозиторий инициализирован")
+        self.log("✅ Git-репозиторий инициализирован, теперь можете пользоваться функциями Git!")
         self._refresh_git_status()
 
     def git_commit(self):
@@ -2741,7 +2748,6 @@ class CodeEditorApp:
         if not self._require_git_repo():
             return
         if not self.git.has_remote():
-            # Предложим добавить origin
             url = simpledialog.askstring(
                 "Git push",
                 "У репозитория нет remote 'origin'.\nВведите URL (или оставьте пустым для отмены):",
@@ -2754,13 +2760,10 @@ class CodeEditorApp:
                 messagebox.showerror("git remote add", err)
                 return
         branch = self.git.current_branch() or ""
-        set_upstream = not self.git.has_commits() is False and branch and \
-                       not branch.startswith('(')
-        # Проще: попробуем сначала push -u, если упадёт — push
+
         def _work():
             out, err = self.git.push(set_upstream=True)
             if out is None:
-                # Возможно, upstream уже стоит — пробуем обычный push
                 out2, err2 = self.git.push(set_upstream=False)
                 if out2 is None:
                     return None, err2 or err
@@ -2805,7 +2808,6 @@ class CodeEditorApp:
         if not url:
             messagebox.showinfo("Git", "У репозитория нет remote 'origin'.")
             return
-        # git@github.com:user/repo.git → https://github.com/user/repo
         if url.startswith("git@") and ":" in url:
             host_part, path = url.split(":", 1)
             host = host_part.replace("git@", "")
@@ -2826,7 +2828,6 @@ class CodeEditorApp:
         return True
 
     def _git_bg(self, title, func):
-        """Выполняет git-команду в фоне и логирует результат."""
         self.log(f"⏳ {title}")
         out, err = func()
         if out is None:
@@ -2839,7 +2840,7 @@ class CodeEditorApp:
         self.root.after(0, self._refresh_git_status)
 
     # ------------------------------------------------------------------
-    # ГАРАНТИЯ НАЛИЧИЯ ПРОЕКТА (защита от NoneType.files)
+    # ГАРАНТИЯ НАЛИЧИЯ ПРОЕКТА
     # ------------------------------------------------------------------
     def _ensure_project(self):
         if self.current_project is not None:
@@ -2849,6 +2850,111 @@ class CodeEditorApp:
         self.load_project(temp_path)
         return self.current_project
 
+    # ------------------------------------------------------------------
+    # ПРОКРУТКА ВКЛАДОК (авто-скрытие слайдера)
+    # ------------------------------------------------------------------
+    def _update_tabs_scrollregion(self, event=None):
+        """Планирует проверку переполнения вкладок (debounce)."""
+        if getattr(self, '_tabs_update_scheduled', False):
+            return
+        self._tabs_update_scheduled = True
+        self.root.after(30, self._do_update_tabs_scrollregion)
+
+    def _do_update_tabs_scrollregion(self):
+        """Проверяет переполнение и показывает/прячет скроллбар."""
+        self._tabs_update_scheduled = False
+        if not getattr(self, 'tabs_canvas', None) or not self.tabs_canvas.winfo_exists():
+            return
+
+        try:
+            self.tabs_canvas.update_idletasks()
+            self.tabs_canvas.configure(scrollregion=self.tabs_canvas.bbox("all"))
+        except Exception:
+            return
+
+        try:
+            content_w = self.tabs_container.winfo_reqwidth()
+            canvas_w = self.tabs_canvas.winfo_width()
+        except Exception:
+            return
+
+        if canvas_w <= 1:
+            self.root.after(50, self._update_tabs_scrollregion)
+            return
+
+        need = content_w > canvas_w + 1
+
+        if need == getattr(self, '_tabs_scrollbar_visible', False):
+            return
+
+        self._tabs_scrollbar_visible = need
+
+        if need:
+            self.tab_bar.configure(height=72)
+            self.tabs_canvas.pack_forget()
+            self.tabs_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+            self.tabs_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        else:
+            self.tabs_scrollbar.pack_forget()
+            self.tab_bar.configure(height=55)
+            try:
+                self.tabs_canvas.xview_moveto(0.0)
+            except Exception:
+                pass
+
+        self._update_tabs_scrollregion()
+
+    def _on_tabs_canvas_configure(self, event):
+        try:
+            self.tabs_canvas.itemconfigure(self.tabs_container_id, height=50)
+        except Exception:
+            pass
+        self._update_tabs_scrollregion()
+
+    def _scroll_tabs(self, event):
+        if getattr(event, 'num', None) == 4:
+            delta = -3
+        elif getattr(event, 'num', None) == 5:
+            delta = 3
+        else:
+            delta = -3 if getattr(event, 'delta', 0) > 0 else 3
+        try:
+            self.tabs_canvas.xview_scroll(delta, "units")
+        except Exception:
+            pass
+        return "break"
+
+    def _scroll_active_tab_into_view(self):
+        if not getattr(self, 'tabs_canvas', None) or not self.tabs_canvas.winfo_exists():
+            return
+        if not getattr(self, '_tabs_scrollbar_visible', False):
+            return
+        if not self.current_project or not self.current_project.current_tab:
+            return
+        try:
+            self.tabs_canvas.update_idletasks()
+            tab = self.current_project.current_tab
+            if not tab.winfo_exists():
+                return
+            x = tab.winfo_x()
+            w = tab.winfo_width()
+            total_w = max(1, self.tabs_container.winfo_reqwidth())
+            canvas_w = self.tabs_canvas.winfo_width()
+            if canvas_w <= 1 or w <= 1:
+                return
+            cur_left = self.tabs_canvas.canvasx(0)
+            cur_right = cur_left + canvas_w
+            if x < cur_left:
+                self.tabs_canvas.xview_moveto(x / total_w)
+            elif x + w > cur_right:
+                new_left = x + w - canvas_w
+                self.tabs_canvas.xview_moveto(max(0, new_left) / total_w)
+        except Exception as e:
+            print(f"Ошибка прокрутки вкладок: {e}")
+
+    # ------------------------------------------------------------------
+    # ПАНЕЛИ / ФОКУС
+    # ------------------------------------------------------------------
     def _apply_saved_pane_sizes(self):
         try:
             if self.explorer_visible:
@@ -2859,7 +2965,6 @@ class CodeEditorApp:
                 self.center_paned.paneconfig(self.console_area, height=h)
         except Exception as e:
             print(f"⚠️ Не удалось применить размеры панелей: {e}")
-        # Фокус на редактор
         try:
             if self.editor:
                 self.editor.focus_set()
@@ -2869,11 +2974,88 @@ class CodeEditorApp:
     def open_marketplace(self):
         PluginMarketplaceDialog(self.root, self)
 
+    def _get_explorer_width(self) -> int:
+        """Реальная ширина проводника (без учёта sash)."""
+        try:
+            if not self.explorer_visible or len(self.main_paned.panes()) < 2:
+                return self.config.get("sidebar_width", 250)
+            self.main_paned.update_idletasks()
+            total = self.main_paned.winfo_width()
+            sash_x = self.main_paned.sash_coord(0)[0]
+            pos = self.config.get("explorer_position", "left")
+            if pos == "left":
+                w = sash_x
+            else:
+                w = total - sash_x
+            return w if w > 50 else self.config.get("sidebar_width", 250)
+        except Exception:
+            return self.config.get("sidebar_width", 250)
+
+    def _autosave_pane_sizes(self, event=None):
+        """Автосохранение размеров панелей при движении саша."""
+        try:
+            self.config["sidebar_width"] = self._get_explorer_width()
+            self.config["console_height"] = self._get_console_height()
+            # Не пишем конфиг на каждый чих — только после остановки движения
+            if getattr(self, '_pane_save_after_id', None):
+                self.root.after_cancel(self._pane_save_after_id)
+            self._pane_save_after_id = self.root.after(500, save_config, self.config)
+        except Exception:
+            pass
+
+    def _get_console_height(self) -> int:
+        """Реальная высота консоли (без учёта sash)."""
+        try:
+            if not self.console_visible or len(self.center_paned.panes()) < 2:
+                return self.config.get("console_height", 200)
+            self.center_paned.update_idletasks()
+            total = self.center_paned.winfo_height()
+            sash_y = self.center_paned.sash_coord(0)[1]
+            pos = self.config.get("console_position", "bottom")
+            if pos == "bottom":
+                h = total - sash_y
+            else:
+                h = sash_y
+            return h if h > 30 else self.config.get("console_height", 200)
+        except Exception:
+            return self.config.get("console_height", 200)
+        """Реальная ширина проводника (без учёта sash)."""
+        try:
+            if not self.explorer_visible or len(self.main_paned.panes()) < 2:
+                return self.config.get("sidebar_width", 250)
+            self.main_paned.update_idletasks()
+            total = self.main_paned.winfo_width()
+            sash_x = self.main_paned.sash_coord(0)[0]
+            pos = self.config.get("explorer_position", "left")
+            if pos == "left":
+                w = sash_x
+            else:
+                w = total - sash_x
+            return w if w > 50 else self.config.get("sidebar_width", 250)
+        except Exception:
+            return self.config.get("sidebar_width", 250)
+    
+    def _get_console_height(self) -> int:
+        """Реальная высота консоли (без учёта sash)."""
+        try:
+            if not self.console_visible or len(self.center_paned.panes()) < 2:
+                return self.config.get("console_height", 200)
+            self.center_paned.update_idletasks()
+            total = self.center_paned.winfo_height()
+            sash_y = self.center_paned.sash_coord(0)[1]
+            pos = self.config.get("console_position", "bottom")
+            if pos == "bottom":
+                h = total - sash_y
+            else:
+                h = sash_y
+            return h if h > 30 else self.config.get("console_height", 200)
+        except Exception:
+            return self.config.get("console_height", 200)
+
     # ------------------------------------------------------------------
-    # СОХРАНЕНИЕ/ВОССТАНОВЛЕНИЕ ПОЗИЦИИ ПРОКРУТКИ
+    # СОХРАНЕНИЕ ПОЗИЦИИ ПРОКРУТКИ
     # ------------------------------------------------------------------
     def _save_scroll_position(self):
-        """Сохраняет текущую позицию прокрутки в активной вкладке."""
         if not (self.config.get("save_scroll_position", True)
                 and self.current_project and self.current_project.current_tab
                 and self.editor):
@@ -3006,6 +3188,7 @@ class CodeEditorApp:
             for t in new_order:
                 t.pack(side=tk.LEFT, padx=2, pady=3)
             self.current_project.tabs = new_order
+        self._update_tabs_scrollregion()
 
     # ------------------------------------------------------------------
     # ВКЛАДКИ
@@ -3029,6 +3212,16 @@ class CodeEditorApp:
         if filename and not restore:
             self.current_project.add_to_recent(filename)
         self.select_tab(tab)
+
+        # Привязываем прокрутку колёсиком к самой вкладке
+        tab.bind("<MouseWheel>", self._scroll_tabs)
+        tab.bind("<Button-4>", self._scroll_tabs)
+        tab.bind("<Button-5>", self._scroll_tabs)
+
+        # Обновляем область прокрутки и показываем новую вкладку
+        self._update_tabs_scrollregion()
+        self.root.after(10, self._scroll_active_tab_into_view)
+
         if filename:
             self.status_label.config(text=f"Открыт: {filename}")
         return tab
@@ -3036,7 +3229,7 @@ class CodeEditorApp:
     def select_tab(self, tab):
         if not self.current_project or tab not in self.current_project.tabs:
             return
-        # Сохраняем позицию прокрутки для старой вкладки
+        # Сохраняем позицию прокрутки старой вкладки
         if (self.current_project.current_tab
                 and self.current_project.current_tab in self.current_project.file_contents
                 and self.editor):
@@ -3097,7 +3290,7 @@ class CodeEditorApp:
             if self.minimap:
                 self.minimap.update_minimap()
 
-        # ─── КЛЮЧЕВОЕ: возвращаем фокус редактору ───
+        # Возвращаем фокус редактору
         try:
             self.editor.focus_set()
         except Exception:
@@ -3105,9 +3298,12 @@ class CodeEditorApp:
 
         if self.discord:
             self.discord._update_presence()
+        self._update_tabs_scrollregion()
         self.current_project.save_state()
         if self.linter is not None:
             self.linter.schedule_lint(500)
+
+        self.root.after(10, self._scroll_active_tab_into_view)
 
     def _close_tab(self, tab):
         if not self.current_project or tab not in self.current_project.tabs:
@@ -3137,6 +3333,7 @@ class CodeEditorApp:
             self.show_welcome_screen()
             if self.editor:
                 self.editor.delete("1.0", tk.END)
+        self._update_tabs_scrollregion()
         self.current_project.save_state()
 
     def _toggle_pin(self, tab):
@@ -3282,7 +3479,6 @@ class CodeEditorApp:
             return
         if os.path.isfile(fp):
             try:
-                # КЛЮЧЕВАЯ ЗАЩИТА от 'NoneType' object has no attribute 'files'
                 self._ensure_project()
                 for t, fn in self.current_project.files.items():
                     if fn == fp:
@@ -3414,7 +3610,6 @@ class CodeEditorApp:
             self.line_numbers.update_numbers()
             if self.minimap:
                 self.minimap._draw_visible_area()
-            # Сохраняем позицию после того, как скролл реально произошёл
             self.editor.after_idle(self._save_scroll_position)
 
     def on_scroll(self, event=None):
@@ -3962,9 +4157,12 @@ class CodeEditorApp:
     # ГОРЯЧИЕ КЛАВИШИ
     # ------------------------------------------------------------------
     def _bind_global_shortcuts(self):
-        """Горячие клавиши с поддержкой русской раскладки (Windows + Linux)."""
+        """Горячие клавиши с поддержкой русской раскладки.
 
-        # --- Windows: Virtual-Key codes для A-Z ---
+        ВАЖНО: Ctrl+C/X/V/A НЕ перехватываются — их обрабатывает сам Tk Text,
+        что исключает двойную вставку/копирование.
+        """
+        # Windows: Virtual-Key codes для A-Z
         VK_WINDOWS = {
             65: 'a', 66: 'b', 67: 'c', 68: 'd', 69: 'e', 70: 'f',
             71: 'g', 72: 'h', 73: 'i', 74: 'j', 75: 'k', 76: 'l',
@@ -3972,9 +4170,7 @@ class CodeEditorApp:
             83: 's', 84: 't', 85: 'u', 86: 'v', 87: 'w', 88: 'x',
             89: 'y', 90: 'z',
         }
-
-        # --- Linux/X11: русская раскладка ЙЦУКЕН ---
-        # Правильные keysym'ы (физ. позиция клавиши → латинская буква)
+        # Linux/X11: правильные keysym'ы для ЙЦУКЕН
         X11_CYRILLIC = {
             'Cyrillic_shorti': 'q', 'Cyrillic_tse': 'w', 'Cyrillic_u': 'e',
             'Cyrillic_ka': 'r', 'Cyrillic_ie': 't', 'Cyrillic_en': 'y',
@@ -3987,8 +4183,6 @@ class CodeEditorApp:
             'Cyrillic_em': 'v', 'Cyrillic_i': 'b', 'Cyrillic_te': 'n',
             'Cyrillic_softsign': 'm',
         }
-
-        # --- Linux, некоторые WM отдают сам Unicode-символ ---
         CHAR_CYRILLIC = {
             'й': 'q', 'ц': 'w', 'у': 'e', 'к': 'r', 'е': 't', 'н': 'y',
             'г': 'u', 'ш': 'i', 'щ': 'o', 'з': 'p',
@@ -3999,44 +4193,32 @@ class CodeEditorApp:
         }
 
         def _get_letter(event):
-            """Латинская буква клавиши независимо от раскладки и ОС."""
             ks = event.keysym
-
-            # 1. Англ. раскладка — keysym уже латинская буква
             if len(ks) == 1 and ks.isalpha() and ord(ks) < 128:
                 return ks.lower()
-
-            # 2. Linux/X11 с XKB — keysym вида 'Cyrillic_es'
             if ks in X11_CYRILLIC:
                 return X11_CYRILLIC[ks]
-
-            # 3. Linux без XKB — keysym это сам символ 'с'
             if len(ks) == 1 and 'а' <= ks.lower() <= 'я':
                 return CHAR_CYRILLIC.get(ks.lower())
-
-            # 4. Windows с русской раскладкой — keysym='??', спасает keycode
             if ks == '??' and is_windows():
                 return VK_WINDOWS.get(event.keycode)
-
             return None
 
         def handler(event):
             # Не реагируем, если открыт диалог
-            # (Найти, Перейти к строке, Настройки, Баг-репорт, Магазин и т.д.)
             if self._dialog_open or self._is_dialog_focused():
                 return
 
             keysym = event.keysym
             state = event.state
 
-            # Ctrl: 0x4 на Linux и Windows. 0x40000 — Windows-специфика (не мешает).
             ctrl = (state & 0x4) != 0 or (state & 0x40000) != 0
             shift = (state & 0x1) != 0
-            alt = (state & 0x80000) != 0  # только правый Alt (Windows)
+            alt = (state & 0x80000) != 0
 
             letter = _get_letter(event)
 
-            # --- F-клавиши ---
+            # F5 / F1
             if keysym == 'F5' and not ctrl and not alt and not shift:
                 self.run_code()
                 return "break"
@@ -4044,7 +4226,8 @@ class CodeEditorApp:
                 self.open_settings()
                 return "break"
 
-            # --- Ctrl+<буква> ---
+            # Ctrl+<буква> — только то, что НЕ делает Tk сам
+            # (Ctrl+C/X/V/A НЕ перехватываем!)
             if ctrl and letter:
                 if letter == 'n':
                     self.add_new_tab(); return "break"
@@ -4058,24 +4241,12 @@ class CodeEditorApp:
                     else:
                         self.save_file()
                     return "break"
-                if letter == 'w':
-                    self.close_current_tab(); return "break"
-                if letter == 'x':
-                    self.cut(); return "break"
-                if letter == 'c':
-                    self.copy(); return "break"
-                if letter == 'v':
-                    self.paste(); return "break"
-                if letter == 'a':
-                    self.select_all(); return "break"
                 if letter == 'f':
                     self.open_find(); return "break"
                 if letter == 'g':
                     self.go_to_line(); return "break"
-                if letter == 'r':
-                    self.run_code(); return "break"
 
-            # --- Ctrl+Plus / Ctrl+Minus ---
+            # Ctrl+Plus / Ctrl+Minus
             if ctrl:
                 if keysym in ('plus', 'equal', 'KP_Add'):
                     self.zoom_in(); return "break"
@@ -4083,16 +4254,12 @@ class CodeEditorApp:
                     self.zoom_out(); return "break"
 
         self.root.bind_all('<Key>', handler)
-        if self.editor:
-            self.editor.bind_all('<Key>', handler)
-
-        print("✅ Горячие клавиши настроены (Windows: VK, Linux: Cyrillic_*)")
 
     def show_about(self):
         about = f"""{APP_NAME} v{VERSION}
 
 Привет, друг! Это K1sh-M1sh!
-Разработан на Python с использованием Tkinter.
+RealCode разработан на Python с использованием Tkinter.
 
 Возможности:
 • Подсветка синтаксиса (Python, C, C++, C#, Go, HolyC)
@@ -4104,8 +4271,13 @@ class CodeEditorApp:
 • Миникарта
 • Поиск (Ctrl+F) и переход к строке (Ctrl+G)
 • Встроенная консоль
+• Git-интеграция
+• Плагины
 
-Кроссплатформенная поддержка: Windows / Linux / macOS
+Предназначен для лёгких проектов на Python.
+Сообщайте о багах: help.k1shm1sh@gmail.com или через Справка -> Сообщить о баге
+
+Кроссплатформенная поддержка: Windows / Linux
 
 © 2026 RealCode
 """
@@ -4196,7 +4368,6 @@ class CodeEditorApp:
         rb.pack(side=tk.RIGHT, padx=(2, 0))
         rb.bind('<Button-1>', lambda e: self.load_project_tree())
 
-        # ─── Контейнер для дерева + вертикального скроллбара ─────────
         tree_container = tk.Frame(self.explorer_frame, bg=VSColorScheme.BG_MEDIUM)
         tree_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
@@ -4215,8 +4386,7 @@ class CodeEditorApp:
                         background=VSColorScheme.BG_MEDIUM,
                         foreground=VSColorScheme.FG, relief="flat")
 
-        # ИСПРАВЛЕНИЕ #1: сначала пакуем СКРОЛЛБАР справа,
-        # потом дерево слева с expand=True. Иначе дерево забирает всё.
+        # Скроллбар пакуем ДО дерева, чтобы он был справа
         vsb = ttk.Scrollbar(tree_container, orient=tk.VERTICAL,
                             command=self.file_tree.yview)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -4226,12 +4396,12 @@ class CodeEditorApp:
         self.file_tree.bind("<Double-1>", self.on_file_double_click)
         self.file_tree.bind("<<TreeviewOpen>>", self.on_tree_open)
 
-        # Цвета для git-маркеров
+        # Цвета git-маркеров
         self.file_tree.tag_configure('git_modified', foreground='#e5c07b')
-        self.file_tree.tag_configure('git_added',    foreground='#98c379')
-        self.file_tree.tag_configure('git_untracked',foreground='#abb2bf')
-        self.file_tree.tag_configure('git_deleted',  foreground='#e06c75')
-        self.file_tree.tag_configure('git_renamed',  foreground='#61afef')
+        self.file_tree.tag_configure('git_added', foreground='#98c379')
+        self.file_tree.tag_configure('git_untracked', foreground='#abb2bf')
+        self.file_tree.tag_configure('git_deleted', foreground='#e06c75')
+        self.file_tree.tag_configure('git_renamed', foreground='#61afef')
 
     def _create_center_panel(self):
         self.center_paned = tk.PanedWindow(self.main_paned, orient=tk.VERTICAL,
@@ -4247,20 +4417,53 @@ class CodeEditorApp:
     def _create_editor_area(self):
         ui = get_default_ui_font()
         self.editor_area = tk.Frame(self.center_paned, bg=VSColorScheme.BG_DARK)
+
+        # Панель вкладок — высота меняется динамически (55 без слайдера, 72 со слайдером)
         self.tab_bar = tk.Frame(self.editor_area, bg=VSColorScheme.BG_MEDIUM, height=55)
         self.tab_bar.pack(fill=tk.X)
         self.tab_bar.pack_propagate(False)
-        self.tabs_container = tk.Frame(self.tab_bar, bg=VSColorScheme.BG_MEDIUM, height=50)
-        self.tabs_container.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.tabs_container.pack_propagate(False)
+        self._tabs_scrollbar_visible = False
+
         ntb = tk.Label(self.tab_bar, text="+  Добавить вкладку",
                        bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG,
                        font=(ui, 10), padx=20, pady=15, cursor="hand2")
-        ntb.pack(side=tk.RIGHT)
+        ntb.pack(side=tk.RIGHT, fill=tk.Y)
         ntb.bind('<Enter>', lambda e: ntb.configure(bg=VSColorScheme.BG_LIGHT))
         ntb.bind('<Leave>', lambda e: ntb.configure(bg=VSColorScheme.BG_MEDIUM))
         ntb.bind('<Button-1>', lambda e: self.add_new_tab())
 
+        tabs_wrapper = tk.Frame(self.tab_bar, bg=VSColorScheme.BG_MEDIUM)
+        tabs_wrapper.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.tabs_scrollbar = tk.Scrollbar(
+            tabs_wrapper, orient=tk.HORIZONTAL,
+            bg=VSColorScheme.SCROLLBAR, troughcolor=VSColorScheme.BG_MEDIUM,
+            highlightthickness=0, bd=0
+        )
+        # НЕ пакуем сразу — только когда есть переполнение
+
+        self.tabs_canvas = tk.Canvas(
+            tabs_wrapper, bg=VSColorScheme.BG_MEDIUM,
+            highlightthickness=0, bd=0, height=50
+        )
+        self.tabs_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.tabs_canvas.configure(xscrollcommand=self.tabs_scrollbar.set)
+        self.tabs_scrollbar.configure(command=self.tabs_canvas.xview)
+
+        self.tabs_container = tk.Frame(self.tabs_canvas, bg=VSColorScheme.BG_MEDIUM)
+        self.tabs_container_id = self.tabs_canvas.create_window(
+            (0, 0), window=self.tabs_container, anchor="nw", height=50
+        )
+
+        self.tabs_container.bind("<Configure>", self._update_tabs_scrollregion)
+        self.tabs_canvas.bind("<Configure>", self._on_tabs_canvas_configure)
+
+        for w in (self.tabs_canvas, self.tabs_container):
+            w.bind("<MouseWheel>", self._scroll_tabs)
+            w.bind("<Button-4>", self._scroll_tabs)
+            w.bind("<Button-5>", self._scroll_tabs)
+
+        # ─── Редактор ───
         self.editor_container = tk.Frame(self.editor_area, bg=VSColorScheme.BG_DARK)
         self.editor_container.pack(fill=tk.BOTH, expand=True)
         editor_inner = tk.Frame(self.editor_container, bg=VSColorScheme.BG_DARK)
@@ -4345,8 +4548,6 @@ class CodeEditorApp:
         self.status_label = tk.Label(s, text="Готов", bg=VSColorScheme.STATUS_BG,
                                      fg="white", font=(ui, 9), padx=10)
         self.status_label.pack(side=tk.LEFT)
-        self.pos_label = tk.Label(s, text="Стр 1, Кол 1", bg=VSColorScheme.STATUS_BG,
-                                  fg="white", font=(ui, 9), padx=10)
 
         self.git_label = tk.Label(
             s, text="", bg=VSColorScheme.STATUS_BG, fg="white",
@@ -4354,6 +4555,9 @@ class CodeEditorApp:
         )
         self.git_label.pack(side=tk.LEFT, padx=(20, 0))
         self.git_label.bind("<Button-1>", lambda e: self._refresh_git_status())
+
+        self.pos_label = tk.Label(s, text="Стр 1, Кол 1", bg=VSColorScheme.STATUS_BG,
+                                  fg="white", font=(ui, 9), padx=10)
         self.pos_label.pack(side=tk.RIGHT)
 
     # ------------------------------------------------------------------
@@ -4400,7 +4604,8 @@ class CodeEditorApp:
             time.sleep(0.2)
 
         try:
-            self.editor.focus_set()
+            if self.editor:
+                self.editor.focus_set()
         except Exception:
             pass
 
@@ -4417,21 +4622,8 @@ class CodeEditorApp:
             except Exception:
                 pass
 
-        # ИСПРАВЛЕНИЕ #3: сохраняем реальные размеры панелей через winfo_*
-        if self.explorer_visible:
-            try:
-                w = self.explorer_frame.winfo_width()
-                if w > 50:
-                    self.config["sidebar_width"] = w
-            except Exception:
-                pass
-        if self.console_visible:
-            try:
-                h = self.console_area.winfo_height()
-                if h > 30:
-                    self.config["console_height"] = h
-            except Exception:
-                pass
+        self.config["sidebar_width"] = self._get_explorer_width()
+        self.config["console_height"] = self._get_console_height()
 
         self.config["last_opened_folder"] = self.config.get("project_path", ".")
         save_config(self.config)
