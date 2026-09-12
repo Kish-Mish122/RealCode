@@ -1,20 +1,32 @@
+# Выходные бинарники
+Linux_Bin/
+Windows_Bin/
+MacOS_Bin/
 dist/
-venv/
-realcode_env/
-settings.json
-.env
-config.py
-version_info.txt
-*.exe
-.RLCode/
-version_info.txt
+build/
+*.spec
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Бэкапы main.py
 backup_main/
-venv/
-README.md
-SupportPIN.txt
-example-plugin/
-light-theme/
-plugins/
-RealCodeBuild/
-*.zip
-*.AppImage
+
+# Секреты (важно!)
+config.py
+
+# Настройки пользователя
+settings.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

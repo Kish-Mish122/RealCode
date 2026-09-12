@@ -1442,9 +1442,10 @@ class UpdateChecker:
         self.update_dialog = tk.Toplevel(self.app.root)
         self.update_dialog.title("Доступно обновление RealCode")
         self.update_dialog.geometry("650x540")
+
         self.update_dialog.configure(bg=VSColorScheme.BG_MEDIUM)
         self.update_dialog.transient(self.app.root)
-        self.update_dialog.resizable(False, False)
+        self.update_dialog.resizable(True, True)
         self.update_dialog.update_idletasks()
         x = (self.update_dialog.winfo_screenwidth() // 2) - (650 // 2)
         y = (self.update_dialog.winfo_screenheight() // 2) - (540 // 2)
@@ -1487,12 +1488,28 @@ class UpdateChecker:
             notes_f.pack(fill=tk.BOTH, expand=True, padx=30, pady=10)
             tk.Label(notes_f, text="Что обновилось:", bg=VSColorScheme.BG_LIGHT,
                      fg=VSColorScheme.FG, font=(ui, 11, "bold")).pack(anchor="w", pady=(0, 5))
-            notes_t = tk.Text(notes_f, height=6, bg=VSColorScheme.BG_LIGHT,
-                              fg=VSColorScheme.FG_LIGHT, font=(ui, 10),
-                              wrap=tk.WORD, relief=tk.FLAT, borderwidth=0)
-            notes_t.pack(fill=tk.BOTH, expand=True)
-            notes_t.insert("1.0", self.update_info['release_notes'])
-            notes_t.config(state=tk.DISABLED)
+
+            # Контейнер для текста + скроллбар
+            notes_container = tk.Frame(notes_f, bg=VSColorScheme.BG_LIGHT)
+            notes_container.pack(fill=tk.BOTH, expand=True)
+
+            notes_t = MarkdownText(
+                notes_container,
+                height=6, bg=VSColorScheme.BG_LIGHT,
+                fg=VSColorScheme.FG_LIGHT, font=(ui, 10),
+                wrap=tk.WORD, relief=tk.FLAT, borderwidth=0,
+                padx=5, pady=5, cursor="arrow"
+            )
+            notes_sb = tk.Scrollbar(notes_container, orient=tk.VERTICAL,
+                                    command=notes_t.yview,
+                                    bg=VSColorScheme.SCROLLBAR,
+                                    troughcolor=VSColorScheme.BG_LIGHT,
+                                    highlightthickness=0, bd=0)
+            notes_t.configure(yscrollcommand=notes_sb.set)
+            notes_sb.pack(side=tk.RIGHT, fill=tk.Y)
+            notes_t.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            notes_t.render(self.update_info['release_notes'])
 
         self.progress_frame = tk.Frame(self.update_dialog, bg=VSColorScheme.BG_MEDIUM)
         self.progress_frame.pack(fill=tk.X, padx=30, pady=10)
@@ -1619,35 +1636,52 @@ del /f /q "%~f0"
 
     def _install_unix_update(self, download_path, macos=False):
         current_exe = sys.executable
+        exe_dir = os.path.dirname(current_exe)
+        exe_name = os.path.basename(current_exe)
+        dl_name = os.path.basename(download_path)
+    
+        # --- Проверяем, можем ли мы писать в директорию и в сам файл ---
+        can_write_dir = os.access(exe_dir, os.W_OK)
+        can_write_exe = os.access(current_exe, os.W_OK) if os.path.exists(current_exe) else False
+    
+        if not (can_write_dir and can_write_exe):
+            # Нужны права root — обновляем через sudo
+            self._install_unix_update_sudo(current_exe, download_path, exe_name, macos)
+            return
+    
+        # --- Обычный путь: без sudo ---
         try:
             os.chmod(download_path, 0o755)
         except Exception as e:
-            print(f"⚠️ Не удалось установить права: {e}")
-        script_path = os.path.join(os.path.dirname(current_exe), "update.sh")
-        dl_name = os.path.basename(download_path)
-        exe_name = os.path.basename(current_exe)
+            print(f"⚠️ Не удалось установить права на скачанный файл: {e}")
+    
+        script_path = os.path.join(exe_dir, "update.sh")
         launch = f'open "./{exe_name}"' if macos else f'"./{exe_name}" &'
         with open(script_path, 'w', encoding='utf-8') as f:
             f.write(f"""#!/bin/bash
-cd "$(dirname "$0")"
-echo "Обновление RealCode..."
-sleep 2
-pkill -f "{exe_name}" 2>/dev/null || true
-sleep 1
-cp "{dl_name}" "{exe_name}"
-chmod +x "{exe_name}"
-rm -f "{dl_name}"
-{launch}
-rm -f "$0"
-""")
+    cd "$(dirname "$0")"
+    echo "Обновление RealCode..."
+    sleep 2
+    pkill -f "{exe_name}" 2>/dev/null || true
+    sleep 1
+    cp "{dl_name}" "{exe_name}"
+    chmod +x "{exe_name}"
+    rm -f "{dl_name}"
+    {launch}
+    rm -f "$0"
+    """)
         try:
             os.chmod(script_path, 0o755)
         except Exception as e:
             print(f"⚠️ Не удалось сделать скрипт исполняемым: {e}")
+    
         if self.update_dialog and self.update_dialog.winfo_exists():
             self.update_dialog.after(0, self.update_dialog.destroy)
-        response = messagebox.askyesno("Обновление загружено!",
-                                       "Обновление загружено успешно! Установить сейчас?")
+    
+        response = messagebox.askyesno(
+            "Обновление загружено!",
+            "Обновление загружено успешно! Установить сейчас?"
+        )
         if response:
             try:
                 subprocess.Popen(['bash', script_path],
@@ -1658,6 +1692,257 @@ rm -f "$0"
                                      f"Не удалось запустить скрипт обновления:\n{e}")
                 return
             self.app.root.after(100, self.app.on_closing)
+    
+    
+    def _install_unix_update_sudo(self, current_exe, download_path, exe_name, macos):
+        """Установка с правами root (директория защищена)."""
+        exe_dir = os.path.dirname(current_exe)
+        dl_name = os.path.basename(download_path)
+        dl_dir = os.path.dirname(download_path)
+    
+        # Готовим скрипт от имени root, чтобы избежать проблем с кавычками
+        script_path = os.path.join(dl_dir, "realcode_update_root.sh")
+        launch = f'open "{current_exe}"' if macos else f'"{current_exe}" &'
+        script_body = f"""#!/bin/bash
+    # Обновление RealCode с правами root
+    set -e
+    pkill -f "{exe_name}" 2>/dev/null || true
+    sleep 1
+    cp -f "{download_path}" "{current_exe}"
+    chmod 755 "{current_exe}"
+    rm -f "{download_path}"
+    sudo -u "${{SUDO_USER:-$USER}}" bash -c '{launch}' &
+    rm -f "$0"
+    """
+        try:
+            with open(script_path, 'w', encoding='utf-8') as f:
+                f.write(script_body)
+            os.chmod(script_path, 0o755)
+        except Exception as e:
+            messagebox.showerror("Ошибка",
+                                 f"Не удалось создать скрипт обновления:\n{e}")
+            return
+    
+        # Спрашиваем подтверждение и запускаем sudo через терминал
+        response = messagebox.askyesno(
+            "Требуются права администратора",
+            f"RealCode находится в:\n{exe_dir}\n\n"
+            f"Для обновления требуются права root.\n\n"
+            f"Сейчас откроется окно ввода пароля sudo. Продолжить?"
+        )
+        if not response:
+            return
+    
+        # Ищем графический терминал для ввода пароля
+        terminal = None
+        for t in ('x-terminal-emulator', 'gnome-terminal', 'konsole', 'xfce4-terminal',
+                  'xterm', 'kitty', 'alacritty', 'tilix', 'mate-terminal'):
+            if shutil.which(t):
+                terminal = t
+                break
+    
+        if not terminal:
+            messagebox.showerror(
+                "Ошибка",
+                "Не найден графический терминал для ввода пароля sudo.\n"
+                "Запустите обновление вручную:\n\n"
+                f"sudo cp -f '{download_path}' '{current_exe}'\n"
+                f"sudo chmod 755 '{current_exe}'"
+            )
+            return
+    
+        # Разные терминалы требуют разные ключи для запуска команды
+        if terminal in ('gnome-terminal', 'tilix', 'mate-terminal'):
+            cmd = [terminal, '--', 'sudo', 'bash', script_path]
+        elif terminal == 'konsole':
+            cmd = [terminal, '-e', 'sudo', 'bash', script_path]
+        elif terminal == 'xfce4-terminal':
+            cmd = [terminal, '-e', f'sudo bash {script_path}']
+        else:
+            cmd = [terminal, '-e', 'sudo', 'bash', script_path]
+    
+        try:
+            subprocess.Popen(cmd)
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось запустить терминал:\n{e}")
+            return
+    
+        if self.update_dialog and self.update_dialog.winfo_exists():
+            self.update_dialog.after(0, self.update_dialog.destroy)
+    
+        # Закрываем приложение — обновление делает скрипт
+        self.app.root.after(2000, self.app.on_closing)
+
+class MarkdownText(tk.Text):
+    """Простой Markdown-рендер в tk.Text с поддержкой тегов и ссылок."""
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._link_map = {}  # tag_name -> url
+        self._setup_tags()
+        self.configure(state=tk.DISABLED)
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Motion>", self._on_motion)
+        self.bind("<Leave>", lambda e: self.configure(cursor="arrow"))
+
+    def _setup_tags(self):
+        ui = get_default_ui_font()
+        mono = get_default_mono_font()
+
+        self.tag_configure("h1", font=(ui, 16, "bold"),
+                           foreground=VSColorScheme.FG,
+                           spacing1=8, spacing3=6)
+        self.tag_configure("h2", font=(ui, 14, "bold"),
+                           foreground=VSColorScheme.FG,
+                           spacing1=6, spacing3=4)
+        self.tag_configure("h3", font=(ui, 12, "bold"),
+                           foreground=VSColorScheme.FG,
+                           spacing1=4, spacing3=3)
+        self.tag_configure("bold", font=(ui, 10, "bold"))
+        self.tag_configure("italic", font=(ui, 10, "italic"))
+        self.tag_configure("code_inline",
+                           font=(mono, 10),
+                           background=VSColorScheme.BG_LIGHT,
+                           foreground=VSColorScheme.STRING)
+        self.tag_configure("code_block",
+                           font=(mono, 10),
+                           background=VSColorScheme.BG_LIGHT,
+                           foreground=VSColorScheme.STRING,
+                           lmargin1=12, lmargin2=12,
+                           spacing1=4, spacing3=4)
+        self.tag_configure("bullet", lmargin1=12, lmargin2=24)
+        self.tag_configure("hr", foreground=VSColorScheme.BORDER,
+                           spacing1=6, spacing3=6)
+        self.tag_configure("link",
+                           foreground=VSColorScheme.ACCENT,
+                           underline=True)
+
+    def render(self, md_text: str):
+        """Отрисовывает Markdown-текст."""
+        self.configure(state=tk.NORMAL)
+        self.delete("1.0", tk.END)
+        self._link_map.clear()
+
+        if not md_text:
+            self.configure(state=tk.DISABLED)
+            return
+
+        lines = md_text.splitlines()
+        in_code_block = False
+
+        for raw in lines:
+            # --- Блок кода ---
+            if raw.strip().startswith("```"):
+                if in_code_block:
+                    # закрытие
+                    in_code_block = False
+                    self.insert(tk.END, "\n")
+                else:
+                    in_code_block = True
+                continue
+
+            if in_code_block:
+                self.insert(tk.END, raw + "\n", "code_block")
+                continue
+
+            # --- Горизонтальная линия ---
+            if raw.strip() in ("---", "***", "___"):
+                self.insert(tk.END, "─" * 60 + "\n", "hr")
+                continue
+
+            # --- Заголовки ---
+            m = re.match(r'^(#{1,3})\s+(.*)$', raw)
+            if m:
+                level = len(m.group(1))
+                tag = f"h{level}"
+                self._insert_with_inline(m.group(2), extra_tag=tag)
+                self.insert(tk.END, "\n")
+                continue
+
+            # --- Списки ---
+            m = re.match(r'^\s*[-*+]\s+(.*)$', raw)
+            if m:
+                self.insert(tk.END, "  •  ", "bullet")
+                self._insert_with_inline(m.group(1), extra_tag="bullet")
+                self.insert(tk.END, "\n")
+                continue
+
+            m = re.match(r'^\s*(\d+)\.\s+(.*)$', raw)
+            if m:
+                self.insert(tk.END, f"  {m.group(1)}.  ", "bullet")
+                self._insert_with_inline(m.group(2), extra_tag="bullet")
+                self.insert(tk.END, "\n")
+                continue
+
+            # --- Пустая строка ---
+            if not raw.strip():
+                self.insert(tk.END, "\n")
+                continue
+
+            # --- Обычная строка ---
+            self._insert_with_inline(raw)
+            self.insert(tk.END, "\n")
+
+        self.configure(state=tk.DISABLED)
+
+    def _insert_with_inline(self, text: str, extra_tag: str = None):
+        """Разбирает inline-разметку: **жирный**, *курсив*, `код`, [ссылка](url)."""
+        pattern = re.compile(
+            r'(\*\*(.+?)\*\*)'      # 1,2 bold
+            r'|(\*(.+?)\*)'          # 3,4 italic
+            r'|(`([^`]+)`)'          # 5,6 code
+            r'|(\[([^\]]+)\]\(([^)]+)\))'  # 7,8,9 link
+        )
+        pos = 0
+        for m in pattern.finditer(text):
+            if m.start() > pos:
+                self._emit(text[pos:m.start()], extra_tag)
+            if m.group(2):  # bold
+                self._emit(m.group(2), "bold", extra_tag)
+            elif m.group(4):  # italic
+                self._emit(m.group(4), "italic", extra_tag)
+            elif m.group(6):  # code
+                self._emit(m.group(6), "code_inline", extra_tag)
+            elif m.group(8):  # link
+                self._emit_link(m.group(8), m.group(9), extra_tag)
+            pos = m.end()
+        if pos < len(text):
+            self._emit(text[pos:], extra_tag)
+
+    def _emit(self, text: str, *tags):
+        tags = tuple(t for t in tags if t)
+        if tags:
+            self.insert(tk.END, text, tags)
+        else:
+            self.insert(tk.END, text)
+
+    def _emit_link(self, label: str, url: str, extra_tag: str = None):
+        tag_name = f"link_{len(self._link_map)}"
+        self._link_map[tag_name] = url
+        tags = [tag_name, "link"]
+        if extra_tag:
+            tags.append(extra_tag)
+        self.insert(tk.END, label, tuple(tags))
+
+    def _on_click(self, event):
+        """Открывает ссылку по клику."""
+        try:
+            index = self.index(f"@{event.x},{event.y}")
+            for tag in self.tag_names(index):
+                if tag in self._link_map:
+                    webbrowser.open(self._link_map[tag])
+                    return "break"
+        except Exception:
+            pass
+
+    def _on_motion(self, event):
+        """Меняет курсор на руку над ссылкой."""
+        try:
+            index = self.index(f"@{event.x},{event.y}")
+            over_link = any(t in self._link_map for t in self.tag_names(index))
+            self.configure(cursor="hand2" if over_link else "arrow")
+        except Exception:
+            pass
 
 
 # =====================================================================
@@ -4545,7 +4830,7 @@ RealCode разработан на Python с использованием Tkinte
         s = tk.Frame(self.root, bg=VSColorScheme.STATUS_BG, height=25)
         s.pack(side=tk.BOTTOM, fill=tk.X)
         s.pack_propagate(False)
-        self.status_label = tk.Label(s, text="Готов", bg=VSColorScheme.STATUS_BG,
+        self.status_label = tk.Label(s, text="Запущен!", bg=VSColorScheme.STATUS_BG,
                                      fg="white", font=(ui, 9), padx=10)
         self.status_label.pack(side=tk.LEFT)
 

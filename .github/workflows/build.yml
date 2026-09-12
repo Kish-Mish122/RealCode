@@ -1,0 +1,99 @@
+name: Build RealCode
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            artifact_name: RealCode-linux
+            exe_name: RealCode
+          - os: windows-latest
+            platform: windows
+            artifact_name: RealCode-windows
+            exe_name: RealCode.exe
+          - os: macos-latest
+            platform: macos
+            artifact_name: RealCode-macos
+            exe_name: RealCode
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install pyflakes pycodestyle pypresence packaging Pillow requests
+
+      - name: Build binary
+        shell: bash
+        run: |
+          python build.py --${{ matrix.platform }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            Linux_Bin/RealCode
+            Windows_Bin/RealCode.exe
+            MacOS_Bin/RealCode
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+          mkdir -p release
+
+          # Windows
+          find artifacts -name "RealCode.exe" -exec cp {} release/RealCode-windows.exe \;
+
+          # Linux
+          find artifacts -name "RealCode" -path "*/Linux_Bin/*" -exec cp {} release/RealCode-linux \;
+          chmod +x release/RealCode-linux || true
+
+          # macOS
+          find artifacts -name "RealCode" -path "*/MacOS_Bin/*" -exec cp {} release/RealCode-macos \;
+          chmod +x release/RealCode-macos || true
+
+          echo "=== Файлы релиза ==="
+          ls -lh release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
