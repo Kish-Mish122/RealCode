@@ -6,6 +6,9 @@ dist/
 build/
 *.spec
 
+plugin/
+plugins/
+
 # Кэш Python
 __pycache__/
 *.pyc

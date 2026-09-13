@@ -1,7 +1,10 @@
 [
-    "/home/k1sh-m1sh/Рабочий стол/RealCode/config.py",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/main.py",
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/TEST.cpp",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/.gitignore",
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/plugin/cpp_csharp_support/manifest.json",
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/plugin/cpp_csharp_support/main.py",
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/config.py",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/build.py",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/.github/workflows/build.yml",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/realcode.desktop",
