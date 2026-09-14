@@ -61,6 +61,15 @@ jobs:
             MacOS_Bin/RealCode
           if-no-files-found: error
 
+      - name: Create config.py from secrets
+        shell: python
+        run: |
+          import os
+          with open("config.py", "w", encoding="utf-8") as f:
+            f.write(os.environ["CONFIG_PY"])
+        env:
+          CONFIG_PY: ${{ secrets.CONFIG_PY }}
+
   release:
     name: Create Release
     needs: build
