@@ -43,6 +43,16 @@ jobs:
           pip install pyinstaller
           pip install pyflakes pycodestyle pypresence packaging Pillow requests
 
+      - name: Create config.py from secrets
+        shell: python
+        run: |
+          import os
+          with open("config.py", "w", encoding="utf-8") as f:
+            f.write(os.environ["CONFIG_PY"])
+        env:
+          CONFIG_PY: ${{ secrets.CONFIG_PY }}
+
+      # 👇 А ТЕПЕРЬ УЖЕ СБОРКА 👇
       - name: Build binary
         shell: bash
         env:
@@ -60,15 +70,6 @@ jobs:
             Windows_Bin/RealCode.exe
             MacOS_Bin/RealCode
           if-no-files-found: error
-
-      - name: Create config.py from secrets
-        shell: python
-        run: |
-          import os
-          with open("config.py", "w", encoding="utf-8") as f:
-            f.write(os.environ["CONFIG_PY"])
-        env:
-          CONFIG_PY: ${{ secrets.CONFIG_PY }}
 
   release:
     name: Create Release
