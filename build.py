@@ -237,6 +237,7 @@ VSVersionInfo(
         f"--name={exe_name}",
         "--noconfirm",
         "--clean",
+        "--hidden-import=config",
     ]
 
     # Иконка
