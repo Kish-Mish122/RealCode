@@ -41,10 +41,10 @@ try:
 except (AttributeError, ValueError):
     pass
 
-old_stdout = sys.stdout
-old_stderr = sys.stderr
-sys.stdout = StringIO()
-sys.stderr = StringIO()
+# old_stdout = sys.stdout
+# old_stderr = sys.stderr
+# sys.stdout = StringIO()
+# sys.stderr = StringIO()
 
 
 # =====================================================================
@@ -276,7 +276,11 @@ DEFAULT_CONFIG = {
     "console_visible": True,
     "explorer_position": "left",
     "console_position": "bottom",
-    "recent_projects": []
+    "recent_projects": [],
+    "smooth_scroll": True,
+    "smooth_scroll_lines": 6,
+    "smooth_scroll_steps": 8,
+    "smooth_scroll_delay_ms": 12,
 }
 
 
@@ -1112,7 +1116,10 @@ class SettingsDialog:
         ui = get_default_ui_font()
         self.window = tk.Toplevel(self.parent)
         self.window.title("Настройки")
-        self.window.geometry("600x600")
+        if is_windows:
+            self.window.geometry("600x600")
+        else:
+            self.window.geometry("700x650")
         self.window.configure(bg=VSColorScheme.BG_MEDIUM)
         self.window.transient(self.parent)
         tk.Label(self.window, text="НАСТРОЙКИ", bg=VSColorScheme.BG_MEDIUM,
@@ -1160,6 +1167,7 @@ class SettingsDialog:
             ("highlight_var", "syntax_highlight", True, "Подсветка синтаксиса"),
             ("minimap_var", "minimap_enabled", True, "Показывать миникарту"),
             ("hidden_var", "show_hidden_files", False, "Показывать скрытые файлы (Например: .git, .env и подобные)"),
+            ("smooth_scroll_var", "smooth_scroll", True, "Плавная прокрутка колесом мыши"),
         ]:
             var = tk.BooleanVar(value=self.config.get(key, default))
             setattr(self, vn, var)
@@ -1232,6 +1240,7 @@ class SettingsDialog:
         self.config["syntax_highlight"] = self.highlight_var.get()
         self.config["minimap_enabled"] = self.minimap_var.get()
         self.config["show_hidden_files"] = self.hidden_var.get()
+        self.config["smooth_scroll"] = self.smooth_scroll_var.get()
         self.callback(self.config)
         self.window.destroy()
 
@@ -1325,8 +1334,8 @@ class DiscordPresence:
                           "idle": "Не за компьютером"}.get(self.current_state, "Пишет код...")
             details = f"{filename} • {project_name}"
             buttons = [
-                {"label": "RealCode in GitLab", "url": "https://gitlab.com/K1sh-M1sh/RealCode"},
-                {"label": "Download RealCode", "url": "https://gitlab.com/K1sh-M1sh/RealCode/-/releases/"}
+                {"label": "RealCode in GitLab", "url": "https://github.com/Kish-Mish122/RealCode"},
+                {"label": "Download RealCode", "url": "https://github.com/Kish-Mish122/RealCode/releases"}
             ]
             self.rpc.update(state=state_text, details=details, start=self.start_time,
                             large_image="realcode_logo",
@@ -2864,6 +2873,7 @@ class CodeEditorApp:
         # Флаги для авто-скрытия скроллбара вкладок
         self._tabs_update_scheduled = False
         self._tabs_scrollbar_visible = False
+        self._scroll_anim_id = None
 
         self.line_numbers = None
         self.minimap = None
@@ -2907,13 +2917,16 @@ class CodeEditorApp:
             self.load_project_tree()
             self.show_welcome_screen()
 
-        self.original_stdout = sys.stdout
-        self.original_stderr = sys.stderr
-        sys.stdout = self
-        sys.stderr = self
+        # self.original_stdout = sys.stdout
+        # self.original_stderr = sys.stderr
+        # sys.stdout = self
+        # sys.stderr = self
 
         self.plugin_manager = PluginManager(self)
         self.plugin_manager.load_plugins()
+
+        # Для плавного скролла
+        self._scroll_anim_id = None
 
         # Применяем сохранённые размеры панелей после отрисовки окна
         self.root.after(150, self._apply_saved_pane_sizes)
@@ -3515,6 +3528,7 @@ class CodeEditorApp:
         if not self.current_project or tab not in self.current_project.tabs:
             return
         # Сохраняем позицию прокрутки старой вкладки
+        self._cancel_scroll_animation()
         if (self.current_project.current_tab
                 and self.current_project.current_tab in self.current_project.file_contents
                 and self.editor):
@@ -3891,11 +3905,109 @@ class CodeEditorApp:
             self._save_scroll_position()
 
     def on_editor_wheel(self, event):
-        if self.editor:
+        """Обработчик колеса мыши в редакторе.
+        Плавный скролл — если включён в настройках."""
+        if not self.editor:
+            return
+
+        # Определяем направление
+        if getattr(event, 'num', None) in (4, 5):
+            # Linux
+            delta = -1 if event.num == 4 else 1
+        else:
+            # Windows / macOS
+            delta = -1 if getattr(event, 'delta', 0) > 0 else 1
+
+        # Сколько строк за один клик колеса (из настроек)
+        # Пропорционально высоте: 1/3 видимой области за клик
+        try:
+            visible_lines = max(10, int(self.editor.index(f"@0,{self.editor.winfo_height()}").split('.')[0]) 
+                                - int(self.editor.index("@0,0").split('.')[0]))
+        except Exception:
+            visible_lines = 30
+        step = max(3, visible_lines // 3)
+        delta_units = delta * step
+
+        if self.config.get("smooth_scroll", True):
+            self._smooth_scroll(delta_units)
+        else:
+            self.editor.yview_scroll(delta_units, "units")
             self.line_numbers.update_numbers()
             if self.minimap:
                 self.minimap._draw_visible_area()
             self.editor.after_idle(self._save_scroll_position)
+
+        return "break"
+
+    def _smooth_scroll(self, delta_units: int):
+        """Плавная анимация прокрутки."""
+        if not self.editor:
+            return
+
+        # Отменяем предыдущую анимацию
+        if self._scroll_anim_id:
+            try:
+                self.root.after_cancel(self._scroll_anim_id)
+            except Exception:
+                pass
+            self._scroll_anim_id = None
+
+        # 1. Запоминаем стартовую позицию
+        start_pos = self.editor.yview()[0]
+
+        # 2. Прокручиваем сразу, чтобы узнать куда нужно попасть
+        self.editor.yview_scroll(delta_units, "units")
+        end_pos = self.editor.yview()[0]
+
+        # Если позиция не изменилась — анимировать нечего
+        if abs(start_pos - end_pos) < 1e-9:
+            self.line_numbers.update_numbers()
+            if self.minimap:
+                self.minimap._draw_visible_area()
+            return
+
+        # 3. Возвращаемся назад
+        self.editor.yview_moveto(start_pos)
+
+        # 4. Анимируем переход
+        steps = max(2, int(self.config.get("smooth_scroll_steps", 10)))
+        delay = max(5, int(self.config.get("smooth_scroll_delay_ms", 10)))
+
+        def animate(i: int):
+            if i > steps:
+                self.editor.yview_moveto(end_pos)
+                self.line_numbers.update_numbers()
+                if self.minimap:
+                    self.minimap._draw_visible_area()
+                self._save_scroll_position()
+                self._scroll_anim_id = None
+                return
+
+            # Плавно интерполируем позицию
+            pos = start_pos + (end_pos - start_pos) * (i / steps)
+            try:
+                self.editor.yview_moveto(pos)
+            except Exception:
+                self._scroll_anim_id = None
+                return
+
+            # Обновляем номера строк и миникарту на каждом шаге
+            self.line_numbers.update_numbers()
+            if self.minimap:
+                self.minimap._draw_visible_area()
+
+            self._scroll_anim_id = self.root.after(delay, animate, i + 1)
+
+        animate(1)
+
+    def _cancel_scroll_animation(self):
+        """Отменяет незавершённую анимацию скролла."""
+        if self._scroll_anim_id:
+            try:
+                self.root.after_cancel(self._scroll_anim_id)
+            except Exception:
+                pass
+            self._scroll_anim_id = None
 
     def on_scroll(self, event=None):
         self.line_numbers.update_numbers()
@@ -4911,10 +5023,11 @@ RealCode разработан на Python с использованием Tkinte
         self.config["console_height"] = self._get_console_height()
 
         self.config["last_opened_folder"] = self.config.get("project_path", ".")
+        self._cancel_scroll_animation()
         save_config(self.config)
 
-        sys.stdout = self.original_stdout
-        sys.stderr = self.original_stderr
+        # sys.stdout = self.original_stdout
+        # sys.stderr = self.original_stderr
         try:
             self.root.quit()
             self.root.destroy()

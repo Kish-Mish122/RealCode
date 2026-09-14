@@ -1,10 +1,14 @@
 {
     "last_opened_files": [
-        "/home/k1sh-m1sh/Рабочий стол/RealCode/main.py",
-        "/home/k1sh-m1sh/Рабочий стол/RealCode/.gitignore"
+        "E:/RealCode\\main.py",
+        "E:/RealCode\\config.py",
+        "E:/RealCode\\build.py",
+        "E:/RealCode\\.github\\workflows\\build.yml"
     ],
-    "expanded_folders": [],
-    "last_active_tab": "/home/k1sh-m1sh/Рабочий стол/RealCode/main.py",
+    "expanded_folders": [
+        ""
+    ],
+    "last_active_tab": "E:/RealCode\\main.py",
     "window_state": {},
     "ignored_lint": [
         [
