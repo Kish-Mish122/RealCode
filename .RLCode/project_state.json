@@ -3,12 +3,14 @@
         "E:/RealCode\\main.py",
         "E:/RealCode\\config.py",
         "E:/RealCode\\build.py",
-        "E:/RealCode\\.github\\workflows\\build.yml"
+        "E:/RealCode\\.github\\workflows\\build.yml",
+        "E:/RealCode\\.gitignore",
+        "E:/RealCode\\CODE_GITLAB.txt"
     ],
     "expanded_folders": [
         ""
     ],
-    "last_active_tab": "E:/RealCode\\main.py",
+    "last_active_tab": "E:/RealCode\\.gitignore",
     "window_state": {},
     "ignored_lint": [
         [
