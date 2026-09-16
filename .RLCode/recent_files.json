@@ -1,22 +1,22 @@
 [
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/main.py",
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/autocomplete.py",
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/config.py",
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/build_standalone.sh",
     "E:/RealCode\\.gitignore",
     "E:/RealCode\\CODE_GITLAB.txt",
     "E:/RealCode\\main.py",
     "E:/RealCode\\config.py",
     "E:/RealCode\\.github\\workflows\\build.yml",
     "E:/RealCode\\build.py",
-    "/home/k1sh-m1sh/Рабочий стол/RealCode/main.py",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/TEST.cpp",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/.gitignore",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/plugin/cpp_csharp_support/manifest.json",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/plugin/cpp_csharp_support/main.py",
-    "/home/k1sh-m1sh/Рабочий стол/RealCode/config.py",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/build.py",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/.github/workflows/build.yml",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/realcode.desktop",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/RealCode.spec",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/CODE_GITLAB.txt",
-    "/home/k1sh-m1sh/Рабочий стол/RealCode/README.md",
-    "/home/k1sh-m1sh/Рабочий стол/RealCode/Инструкция по созданию AppImage.py",
-    "/home/k1sh-m1sh/Рабочий стол/RealCode/snap/snapcraft.yaml"
+    "/home/k1sh-m1sh/Рабочий стол/RealCode/README.md"
 ]

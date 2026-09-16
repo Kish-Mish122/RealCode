@@ -8,6 +8,11 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 import json
 import os
+import signal
+import re
+import threading
+import pty
+from typing import List, Set
 import sys
 from pathlib import Path
 import threading
@@ -281,6 +286,11 @@ DEFAULT_CONFIG = {
     "smooth_scroll_lines": 6,
     "smooth_scroll_steps": 8,
     "smooth_scroll_delay_ms": 12,
+    "autocomplete_enabled": True,
+    "autocomplete_delay_ms": 250,
+    "terminal_visible": False,      # по умолчанию выключен
+    "terminal_shell": "",           # пустая строка = auto
+    "terminal_font_size": 10,
 }
 
 
@@ -346,6 +356,7 @@ from config import FORMSPREE_ID
 from config import MIN_REALCODE_VERSION
 from config import GITHUB_VERSION_MIN
 from config import PLUGIN_URL_CONF
+from autocomplete import AutocompleteProvider
 
 DISCORD_ID = DISCORD_ID_CONFIG
 GITHUB_VERSION_URL = GITHUB_VERSION_URL_CONFIG
@@ -1167,7 +1178,7 @@ class SettingsDialog:
             ("highlight_var", "syntax_highlight", True, "Подсветка синтаксиса"),
             ("minimap_var", "minimap_enabled", True, "Показывать миникарту"),
             ("hidden_var", "show_hidden_files", False, "Показывать скрытые файлы (Например: .git, .env и подобные)"),
-            ("smooth_scroll_var", "smooth_scroll", True, "Плавная прокрутка колесом мыши"),
+            ("smooth_scroll_var", "smooth_scroll", True, "Плавная прокрутка колесом мыши")
         ]:
             var = tk.BooleanVar(value=self.config.get(key, default))
             setattr(self, vn, var)
@@ -2835,6 +2846,627 @@ class ToolTip:
             y += self.widget.winfo_rooty() + 20
             self.tip_window.wm_geometry(f"+{x}+{y}")
 
+class AutocompletePopup:
+    """Всплывающее окно с подсказками автодополнения."""
+
+    def __init__(self, parent, editor, provider, on_apply):
+        self.parent = parent          # tk-виджет-родитель (editor_area)
+        self.editor = editor          # tk.Text
+        self.provider = provider
+        self.on_apply = on_apply      # callback(word) — что вставить
+
+        self.window = None
+        self.listbox = None
+        self.items: list[str] = []
+        self.selected_index = 0
+        self.active = False
+        self.prefix = ""
+        self.replace_start = None     # индекс начала заменяемого слова
+
+    # ─── Показать/скрыть ─────────────────────────────────────────────
+    def show(self, items: list[str], replace_start: str, prefix: str):
+        if not items:
+            self.hide()
+            return
+
+        self.items = items
+        self.selected_index = 0
+        self.prefix = prefix
+        self.replace_start = replace_start
+
+        if not self.window or not self.window.winfo_exists():
+            self._create_window()
+
+        # Заполняем список
+        self.listbox.delete(0, tk.END)
+        for item in items:
+            self.listbox.insert(tk.END, item)
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(0)
+        self.listbox.activate(0)
+
+        # Позиционируем под курсором
+        self._position_window()
+        self.window.deiconify()
+        self.window.lift()
+        self.active = True
+
+    def hide(self):
+        self.active = False
+        if self.window and self.window.winfo_exists():
+            self.window.withdraw()
+
+    def is_active(self):
+        return self.active and self.window and self.window.winfo_exists()
+
+    # ─── Окно ────────────────────────────────────────────────────────
+    def _create_window(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.wm_overrideredirect(True)
+        self.window.configure(bg=VSColorScheme.BORDER)
+
+        frame = tk.Frame(self.window, bg=VSColorScheme.BG_LIGHT,
+                         highlightthickness=1,
+                         highlightbackground=VSColorScheme.ACCENT)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        self.listbox = tk.Listbox(
+            frame,
+            bg=VSColorScheme.BG_LIGHT,
+            fg=VSColorScheme.FG,
+            selectbackground=VSColorScheme.SELECTION,
+            selectforeground="white",
+            activestyle="none",
+            font=(get_default_mono_font(), 10),
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            height=8,
+            width=40,
+            exportselection=False,
+        )
+        self.listbox.pack(fill=tk.BOTH, expand=True)
+
+        # Клик мышкой — вставить
+        self.listbox.bind("<Button-1>", self._on_click)
+        self.listbox.bind("<Double-Button-1>", self._on_click)
+        # Прокрутка колёсиком
+        self.listbox.bind("<MouseWheel>", self._on_wheel)
+        self.listbox.bind("<Button-4>", self._on_wheel)
+        self.listbox.bind("<Button-5>", self._on_wheel)
+
+        self.window.withdraw()
+
+    def _position_window(self):
+        try:
+            # Позиция курсора
+            bbox = self.editor.bbox(tk.INSERT)
+            if not bbox:
+                # Курсор за пределами видимой области — скрываем
+                self.hide()
+                return
+            x, y, w, h = bbox
+            # Абсолютные координаты на экране
+            root_x = self.editor.winfo_rootx() + x
+            root_y = self.editor.winfo_rooty() + y + h
+
+            # Не выходить за границы экрана
+            sw = self.window.winfo_screenwidth()
+            sh = self.window.winfo_screenheight()
+            win_w = 300
+            win_h = 180
+            if root_x + win_w > sw:
+                root_x = sw - win_w - 10
+            if root_y + win_h > sh:
+                root_y = root_y - h - win_h - 5
+
+            self.window.geometry(f"{win_w}x{win_h}+{root_x}+{root_y}")
+        except Exception as e:
+            print(f"Autocomplete position error: {e}")
+
+    # ─── Навигация ───────────────────────────────────────────────────
+    def move_selection(self, delta: int):
+        if not self.items:
+            return
+        self.selected_index = (self.selected_index + delta) % len(self.items)
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(self.selected_index)
+        self.listbox.activate(self.selected_index)
+        self.listbox.see(self.selected_index)
+
+    def apply_selected(self):
+        if not self.items:
+            self.hide()
+            return
+        word = self.items[self.selected_index]
+        self.on_apply(word, self.replace_start, self.prefix)
+        self.hide()
+
+    # ─── События виджета ─────────────────────────────────────────────
+    def _on_click(self, event):
+        idx = self.listbox.nearest(event.y)
+        if 0 <= idx < len(self.items):
+            self.selected_index = idx
+            self.apply_selected()
+
+    def _on_wheel(self, event):
+        if getattr(event, 'num', None) == 4:
+            self.listbox.yview_scroll(-1, "units")
+        elif getattr(event, 'num', None) == 5:
+            self.listbox.yview_scroll(1, "units")
+        else:
+            self.listbox.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
+
+# ANSI/VTE escape-последовательности
+_ANSI_RE = re.compile(
+    r'\x1b'                        # ESC
+    r'(?:'
+    # --- CSI: \x1b[ ... финальный символ @-~
+    r'\[[0-?]*[ -/]*[@-~]'
+    r'|'
+    # --- OSC: \x1b] ... BEL или ST
+    r'\][^\x07\x1b]*(?:\x07|\x1b\\)'
+    r'|'
+    # --- одиночные 2-символьные ESC-последовательности
+    r'[@-Z\\-_]'
+    r'|'
+    # --- если OSC пришёл БЕЗ ESC в начале (VTE-мусор без \x1b):
+    r'\d*;vte\.[^\x07\x1b\[\]]*'
+    r')'
+)
+
+# VTE-специфичный мусор: "666;vte.shell.postexec=0", 
+# "7;file:///path", "1;file:///", "precmd", "preexec", "postexec"
+_VTE_MUCK_RE = re.compile(
+    r'(?:'
+    r'\d*;vte\.shell\.(?:precmd|preexec|postexec|precmd|preexec)[^a-zA-Z]?'
+    r'|\d+;file://[^\s\x07]*'
+    r'|\d+;file://'
+    r'|vte\.shell\.(?:precmd|preexec|postexec)'
+    r')'
+)
+
+# Хвост, который может быть не до конца — оставляем на следующий блок
+_ANSI_INCOMPLETE_TAIL_RE = re.compile(r'\x1b[^\x1b]*$')
+
+class TerminalPanel:
+    """Встроенный интерактивный терминал (PowerShell / bash / zsh)."""
+
+    def __init__(self, parent, app, on_exit_callback=None):
+        self.parent = parent
+        self.app = app
+        self.on_exit_callback = on_exit_callback
+
+        self.process = None
+        self.running = False
+        self.reader_thread = None
+
+        self._pty_master = None
+
+        # Очередь для безопасной передачи данных из треда в Tk
+        self.output_queue = queue.Queue()
+
+        # Для истории команд (↑/↓)
+        self.history = []
+        self.history_index = -1
+
+        # Позиция начала ввода (после приглашения)
+        self._input_start = "1.0"
+        # Буфер незавершённых ANSI-последовательностей
+        self._ansi_buffer = ""
+
+        self.frame = None
+        self.text = None
+        self.scrollbar = None
+
+        self._create_ui()
+        self._poll_queue()
+
+    # ─── UI ──────────────────────────────────────────────────────────
+    def _create_ui(self):
+        ui = get_default_ui_font()
+        self.frame = tk.Frame(self.parent, bg=VSColorScheme.BG_DARK)
+
+        header = tk.Frame(self.frame, bg="#0a3d62", height=25)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+
+        tk.Label(header, text="ТЕРМИНАЛ", bg="#0a3d62", fg="white",
+                 font=(ui, 9, "bold"), padx=10).pack(side=tk.LEFT)
+
+        # Кнопка "Перезапустить"
+        restart_btn = tk.Label(header, text="🔄 Перезапустить",
+                               bg="#0a3d62", fg="white", font=(ui, 9),
+                               padx=10, cursor="hand2")
+        restart_btn.pack(side=tk.RIGHT)
+        restart_btn.bind('<Enter>', lambda e: restart_btn.configure(bg="#14538a"))
+        restart_btn.bind('<Leave>', lambda e: restart_btn.configure(bg="#0a3d62"))
+        restart_btn.bind('<Button-1>', lambda e: self.restart())
+
+        close_btn = tk.Label(header, text="✕", bg="#0a3d62", fg="white",
+                             font=(ui, 10, "bold"), padx=10, cursor="hand2")
+        close_btn.pack(side=tk.RIGHT)
+        close_btn.bind('<Enter>', lambda e: close_btn.configure(bg="#e81123"))
+        close_btn.bind('<Leave>', lambda e: close_btn.configure(bg="#0a3d62"))
+        close_btn.bind('<Button-1>', lambda e: self.app.toggle_terminal())
+
+        container = tk.Frame(self.frame, bg=VSColorScheme.BG_DARK)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        self.text = tk.Text(
+            container,
+            wrap=tk.CHAR,
+            font=(get_default_mono_font(),
+                  self.app.config.get("terminal_font_size", 10)),
+            bg="#0c0c0c", fg="#e0e0e0",
+            insertbackground="#ffffff",
+            selectbackground="#264f78",
+            relief=tk.FLAT, borderwidth=0,
+            padx=6, pady=6,
+            undo=False,
+        )
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.scrollbar = tk.Scrollbar(
+            container, orient=tk.VERTICAL, command=self.text.yview,
+            bg=VSColorScheme.SCROLLBAR, troughcolor=VSColorScheme.BG_DARK,
+            width=12)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.text.config(yscrollcommand=self.scrollbar.set)
+
+        # События
+        self.text.bind('<Return>', self._on_enter)
+        self.text.bind('<KP_Enter>', self._on_enter)
+        self.text.bind('<BackSpace>', self._on_backspace)
+        self.text.bind('<Control-c>', self._on_ctrl_c)
+        self.text.bind('<Control-v>', self._on_paste)
+        self.text.bind('<Control-l>', self._on_ctrl_l)
+        self.text.bind('<Up>', self._on_history_up)
+        self.text.bind('<Down>', self._on_history_down)
+        self.text.bind('<Button-1>', self._on_click)
+        # Любой ввод — держим курсор после _input_start
+        self.text.bind('<Key>', self._on_any_key, add='+')
+
+    # ─── Запуск / остановка процесса ────────────────────────────────
+    def start(self):
+        if self.running:
+            return
+        shell, args = self._detect_shell()
+        if not shell:
+            self._append_text("❌ Не найден терминал для этой ОС.\n")
+            return
+
+        try:
+            env = os.environ.copy()
+            env["TERM"] = "xterm-256color" if not is_windows() else "dumb"
+            env["NO_COLOR"] = "1"
+            env["CLICOLOR"] = "0"
+            env["PS1"] = r'\u@\h:\w: '
+            env["PS2"] = "> "
+            env["PROMPT_COMMAND"] = ""
+
+            # Отключаем VTE-интеграцию bash
+            for var in ("VTE_VERSION", "VTE_SHELL_PID", "TERM_PROGRAM",
+                        "TERM_PROGRAM_VERSION", "VSCODE_GIT_IPC_HANDLE",
+                        "KITTY_WINDOW_ID", "ITERM_SESSION_ID",
+                        "WT_SESSION", "ALACRITTY_WINDOW_ID",
+                        "VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT"):
+                env.pop(var, None)
+
+            if is_windows():
+                # Windows — обычный pipe (PTY там нет)
+                creationflags = 0x08000000  # CREATE_NO_WINDOW
+                self.process = subprocess.Popen(
+                    [shell] + args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    bufsize=0,
+                    creationflags=creationflags,
+                    cwd=self.app.config.get("project_path", "."),
+                    env=env,
+                )
+                self._pty_master = None
+            else:
+                # Linux / macOS — PTY
+                master_fd, slave_fd = pty.openpty()
+
+                # ★ Отключаем ECHO на slave — иначе bash дублирует ввод,
+                #   который мы сами печатаем в tk.Text
+                import termios
+                try:
+                    attrs = termios.tcgetattr(slave_fd)
+                    attrs[3] &= ~termios.ECHO     # не печатать ввод
+                    attrs[3] &= ~termios.ECHONL   # не печатать \n
+                    termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+                except Exception as e:
+                    print(f"Не удалось отключить ECHO: {e}")
+
+                self._pty_master = master_fd
+                self.process = subprocess.Popen(
+                    [shell] + args,
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    bufsize=0,
+                    preexec_fn=os.setsid,
+                    cwd=self.app.config.get("project_path", "."),
+                    env=env,
+                )
+                os.close(slave_fd)
+
+            self.running = True
+            self.reader_thread = threading.Thread(
+                target=self._read_output, daemon=True)
+            self.reader_thread.start()
+
+            self._append_text(f"📟 Запущен: {os.path.basename(shell)}\n")
+            self._append_text("─" * 60 + "\n")
+            self.text.focus_set()
+        except Exception as e:
+            self._append_text(f"❌ Ошибка запуска: {e}\n")
+
+    def stop(self):
+        self.running = False
+        if self.process:
+            try:
+                if is_windows():
+                    self.process.terminate()
+                else:
+                    try:
+                        os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                    except Exception:
+                        self.process.terminate()
+            except Exception:
+                pass
+            self.process = None
+        if getattr(self, '_pty_master', None) is not None:
+            try:
+                os.close(self._pty_master)
+            except Exception:
+                pass
+            self._pty_master = None
+
+    def restart(self):
+        self.stop()
+        time.sleep(0.3)
+        self.text.delete("1.0", tk.END)
+        self._input_start = "1.0"
+        self.start()
+
+    def _detect_shell(self):
+        """Определяет оболочку для текущей ОС."""
+        custom = self.app.config.get("terminal_shell", "").strip()
+        if custom:
+            return custom, []
+
+        if is_windows():
+            # PowerShell 7 (pwsh) предпочтительнее, но есть не всегда
+            for exe in ("pwsh.exe", "powershell.exe"):
+                p = shutil.which(exe)
+                if p:
+                    return p, ["-NoLogo", "-NoProfile"]
+            # Fallback — cmd.exe
+            return "cmd.exe", []
+        else:
+            # Linux / macOS
+            shell = os.environ.get("SHELL")
+            if shell and os.path.exists(shell):
+                return shell, ["-i"]
+            for sh in ("/bin/bash", "/bin/zsh", "/bin/sh"):
+                if os.path.exists(sh):
+                    return sh, ["-i"]
+        return None, []
+
+    # ─── Чтение вывода ──────────────────────────────────────────────
+    def _read_output(self):
+        """Читает вывод — из PTY на Linux, из pipe на Windows."""
+        try:
+            if getattr(self, '_pty_master', None) is not None:
+                fd = self._pty_master
+            else:
+                fd = self.process.stdout.fileno()
+
+            while self.running and self.process:
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                try:
+                    text = chunk.decode("utf-8", errors="replace")
+                except Exception:
+                    text = chunk.decode("latin-1", errors="replace")
+                self.output_queue.put(text)
+        except Exception as e:
+            self.output_queue.put(f"\n[ошибка чтения: {e}]\n")
+        finally:
+            self.running = False
+            self.output_queue.put("\n[процесс завершён]\n")
+
+    def _poll_queue(self):
+        """Периодически забирает вывод из очереди и пишет в Text."""
+        try:
+            # Забираем максимум 20 кусков, чтобы не залипнуть
+            for _ in range(20):
+                try:
+                    data = self.output_queue.get_nowait()
+                except queue.Empty:
+                    break
+                self._append_text(data)
+        except Exception:
+            pass
+        # Продолжаем опрос
+        try:
+            self.frame.after(30, self._poll_queue)
+        except Exception:
+            pass
+
+    def _append_text(self, data: str):
+        try:
+            data = self._ansi_buffer + data
+
+            # 1. Отрезаем незавершённый ESC-хвост (оставим до след. куска)
+            tail = re.search(r'\x1b[^\x1b]*$', data)
+            if tail:
+                self._ansi_buffer = tail.group(0)
+                data = data[:tail.start()]
+            else:
+                self._ansi_buffer = ""
+
+            # 2. Чистим завершённые ESC-последовательности
+            data = _ANSI_RE.sub("", data)
+
+            # 3. ★ Чистим VTE-мусор, у которого ESC уже был съеден
+            data = _VTE_MUCK_RE.sub("", data)
+
+            # 4. Остатки одиночных управляющих байтов
+            data = data.replace("\x07", "").replace("\x00", "")
+            data = data.replace("\r\n", "\n").replace("\r", "")
+
+            # 5. Убираем "повисшие" цифры + `;` в начале строк, 
+            #    которые остались от обрывков типа "07;file://"
+            data = re.sub(r'^\d{0,3};(?=\S)', '', data, flags=re.MULTILINE)
+
+            if not data:
+                return
+
+            self.text.insert(tk.END, data)
+            self.text.see(tk.END)
+            self._input_start = self.text.index(f"{tk.END} - 1c")
+        except Exception as e:
+            print(f"Terminal append error: {e}")
+
+    # ─── Отправка ввода ─────────────────────────────────────────────
+    def _get_current_input(self) -> str:
+        """Что пользователь напечатал после _input_start."""
+        try:
+            return self.text.get(self._input_start, tk.INSERT)
+        except Exception:
+            return ""
+
+    def _send(self, data: str):
+        try:
+            if getattr(self, '_pty_master', None) is not None:
+                os.write(self._pty_master, data.encode("utf-8"))
+            elif self.process and self.process.stdin:
+                self.process.stdin.write(data.encode("utf-8"))
+                self.process.stdin.flush()
+        except Exception as e:
+            self._append_text(f"\n[ошибка отправки: {e}]\n")
+
+    # ─── Обработчики клавиш ─────────────────────────────────────────
+    def _on_enter(self, event):
+        line = self._get_current_input()
+        self._append_text("\n")  # фиксируем перевод строки в Text
+        self._send(line + "\n")
+        # Запоминаем в историю
+        if line.strip():
+            self.history.append(line)
+            if len(self.history) > 100:
+                self.history = self.history[-100:]
+        self.history_index = len(self.history)
+        # Перенос _input_start на новую строку
+        self._input_start = self.text.index(f"{tk.END} - 1c")
+        return "break"
+
+    def _on_backspace(self, event):
+        """Не даём стирать то, что было выведено программой."""
+        try:
+            if self.text.compare(tk.INSERT, ">", self._input_start):
+                return None  # обычное поведение
+        except Exception:
+            pass
+        return "break"
+
+    def _on_ctrl_c(self, event):
+        """Ctrl+C — отправляет SIGINT в процесс."""
+        if self.process:
+            try:
+                if is_windows():
+                    self.process.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    self.process.send_signal(signal.SIGINT)
+                self._append_text("^C\n")
+            except Exception:
+                # Иногда не срабатывает — просто шлём Ctrl+C символом
+                self._send("\x03")
+        self._input_start = self.text.index(f"{tk.END} - 1c")
+        return "break"
+
+    def _on_paste(self, event):
+        """Ctrl+V — вставляем только как ввод."""
+        try:
+            text = self.parent.clipboard_get()
+        except Exception:
+            return "break"
+        # Убираем переводы строк, чтобы не выполнять многострочно
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        self.text.insert(tk.INSERT, text)
+        return "break"
+
+    def _on_ctrl_l(self, event):
+        """Ctrl+L — очистить терминал."""
+        self.text.delete("1.0", tk.END)
+        self._input_start = "1.0"
+        return "break"
+
+    def _on_history_up(self, event):
+        if not self.history:
+            return "break"
+        if self.history_index > 0:
+            self.history_index -= 1
+        self._replace_input(self.history[self.history_index])
+        return "break"
+
+    def _on_history_down(self, event):
+        if not self.history:
+            return "break"
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+        elif self.history_index == len(self.history) - 1:
+            self.history_index = len(self.history)
+            self._replace_input("")
+            return "break"
+        self._replace_input(self.history[self.history_index])
+        return "break"
+
+    def _replace_input(self, new_text: str):
+        """Заменяет текущий ввод на new_text."""
+        try:
+            self.text.delete(self._input_start, tk.INSERT)
+            self.text.insert(tk.INSERT, new_text)
+            self.text.mark_set(tk.INSERT, tk.END)
+        except Exception:
+            pass
+
+    def _on_click(self, event):
+        """Клик не должен уводить курсор до _input_start."""
+        self.frame.after(1, self._clamp_cursor)
+
+    def _on_any_key(self, event):
+        # Любая клавиша кроме навигации — не даём курсору уйти назад
+        if event.keysym in ('Left', 'Right', 'Home', 'End', 'Up', 'Down',
+                            'Prior', 'Next'):
+            return None
+        self.frame.after(1, self._clamp_cursor)
+
+    def _clamp_cursor(self):
+        try:
+            if self.text.compare(tk.INSERT, "<", self._input_start):
+                self.text.mark_set(tk.INSERT, tk.END)
+        except Exception:
+            pass
+
+    def focus(self):
+        if self.text:
+            self.text.focus_set()
+
+    def get_frame(self):
+        return self.frame
+
 
 # =====================================================================
 # ГЛАВНОЕ ПРИЛОЖЕНИЕ
@@ -2875,6 +3507,12 @@ class CodeEditorApp:
         self._tabs_scrollbar_visible = False
         self._scroll_anim_id = None
 
+        # Автодополнение
+        self.autocomplete_provider = AutocompleteProvider(
+            self.config.get("project_path", "."))
+        self.autocomplete_popup = None
+        self._autocomplete_after_id = None
+
         self.line_numbers = None
         self.minimap = None
         self.editor = None
@@ -2899,6 +3537,11 @@ class CodeEditorApp:
         self.console_scrollbar = None
         self.editor_container = None
         self.toolbar = None
+        self.terminal_panel = None
+        self.console_tabbar = None
+        self.console_body = None
+        self.console_frame = None
+        self._console_tab_active = "console"
 
         self.explorer_visible = self.config.get("sidebar_visible", True)
         self.console_visible = self.config.get("console_visible", True)
@@ -3425,6 +4068,9 @@ class CodeEditorApp:
         self.folder_label.config(text=os.path.basename(path))
         self.load_project_tree()
         self._restore_project_state()
+        # Перезапускаем сканирование автодополнения под новый проект
+        if hasattr(self, 'autocomplete_provider'):
+            self.autocomplete_provider.set_project(path)
         self._init_git_for_project()
 
     def save_project_state(self):
@@ -3807,6 +4453,15 @@ class CodeEditorApp:
         if not (self.current_project and self.current_project.current_tab and self.editor):
             return
         self.update_cursor_position()
+        # Автодополнение
+        # Показываем при наборе буквы/цифры или после точки
+        if event and event.keysym and (
+            len(event.keysym) == 1 or event.keysym in ('period', 'underscore')
+        ):
+            self._schedule_autocomplete()
+        elif event and event.keysym in ('space', 'Return', 'BackSpace', 'Escape'):
+            if self.autocomplete_popup:
+                self.autocomplete_popup.hide()
         if self._line_numbers_after_id:
             self.root.after_cancel(self._line_numbers_after_id)
         self._line_numbers_after_id = self.root.after(200, self._update_line_numbers_delayed)
@@ -3839,6 +4494,107 @@ class CodeEditorApp:
 
         if self.config.get("syntax_highlight", True) and self.linter is not None:
             self.linter.schedule_lint(800)
+
+    # ------------------------------------------------------------------
+    # АВТОДОПОЛНЕНИЕ
+    # ------------------------------------------------------------------
+    def _trigger_autocomplete(self, event=None):
+        """Показывает попап, если есть что предложить."""
+        if not self.editor:
+            return
+        try:
+            # Что написано до курсора в текущей строке
+            insert_index = self.editor.index(tk.INSERT)
+            line_start = self.editor.index(f"{insert_index} linestart")
+            before_cursor = self.editor.get(line_start, insert_index)
+
+            # После точки — контекстные атрибуты
+            m_dot = re.search(r'(\w+)\.\s*(\w*)$', before_cursor)
+            if m_dot:
+                obj_name = m_dot.group(1)
+                prefix = m_dot.group(2)
+                items = self.autocomplete_provider.get_dot_suggestions(obj_name)
+                if prefix:
+                    items = [i for i in items if i.lower().startswith(prefix.lower())]
+                if items:
+                    replace_start = f"{insert_index} - {len(prefix)}c"
+                    self.autocomplete_popup.show(items, replace_start, prefix)
+                else:
+                    self.autocomplete_popup.hide()
+                return
+
+            # Иначе — по слову слева от курсора
+            m_word = re.search(r'([A-Za-z_]\w*)$', before_cursor)
+            if not m_word:
+                self.autocomplete_popup.hide()
+                return
+
+            prefix = m_word.group(1)
+            if len(prefix) < 2:  # не показываем на 1 символ
+                self.autocomplete_popup.hide()
+                return
+
+            full_text = self.editor.get("1.0", tk.END)
+            items = self.autocomplete_provider.get_suggestions(
+                full_text, prefix, before_cursor)
+
+            if items:
+                replace_start = f"{insert_index} - {len(prefix)}c"
+                self.autocomplete_popup.show(items, replace_start, prefix)
+            else:
+                self.autocomplete_popup.hide()
+        except Exception as e:
+            print(f"Autocomplete trigger error: {e}")
+
+    def _schedule_autocomplete(self, delay=250):
+        """Debounce — не показывать попап на каждый чих."""
+        if self._autocomplete_after_id:
+            try:
+                self.root.after_cancel(self._autocomplete_after_id)
+            except Exception:
+                pass
+        self._autocomplete_after_id = self.root.after(
+            delay, self._trigger_autocomplete)
+
+    def _apply_autocomplete(self, word, replace_start, prefix):
+        """Вставляет выбранное слово вместо набранного префикса."""
+        try:
+            self.editor.delete(replace_start, tk.INSERT)
+            self.editor.insert(tk.INSERT, word)
+            self.editor.focus_set()
+            self.update_cursor_position()
+        except Exception as e:
+            print(f"Autocomplete apply error: {e}")
+
+    def _ac_on_up(self, event):
+        if self.autocomplete_popup and self.autocomplete_popup.is_active():
+            self.autocomplete_popup.move_selection(-1)
+            return "break"
+        return None
+
+    def _ac_on_down(self, event):
+        if self.autocomplete_popup and self.autocomplete_popup.is_active():
+            self.autocomplete_popup.move_selection(1)
+            return "break"
+        return None
+
+    def _ac_on_escape(self, event):
+        if self.autocomplete_popup and self.autocomplete_popup.is_active():
+            self.autocomplete_popup.hide()
+            return "break"
+        return None
+
+    def _ac_on_tab(self, event):
+        if self.autocomplete_popup and self.autocomplete_popup.is_active():
+            self.autocomplete_popup.apply_selected()
+            return "break"
+        return None
+
+    def _ac_on_return(self, event):
+        if self.autocomplete_popup and self.autocomplete_popup.is_active():
+            self.autocomplete_popup.apply_selected()
+            return "break"
+        return None
 
     def _update_line_numbers_delayed(self):
         if self.line_numbers and self.line_numbers.winfo_exists():
@@ -4272,6 +5028,70 @@ class CodeEditorApp:
         self.show_explorer_var.set(self.explorer_visible)
         self.config["sidebar_visible"] = self.explorer_visible
 
+    # ------------------------------------------------------------------
+    # ТЕРМИНАЛ
+    # ------------------------------------------------------------------
+    def _switch_console_tab(self, which: str):
+        """Переключает КОНСОЛЬ / ТЕРМИНАЛ."""
+        if which == "console":
+            # Скрыть терминал, показать консоль
+            try:
+                self.terminal_panel.get_frame().pack_forget()
+            except Exception:
+                pass
+            self.console_frame.pack(fill=tk.BOTH, expand=True)
+
+            self.console_tab_btn.configure(bg=VSColorScheme.STATUS_BG, fg="white")
+            self.terminal_tab_btn.configure(bg=VSColorScheme.BG_MEDIUM,
+                                            fg=VSColorScheme.FG_LIGHT)
+            self._console_tab_active = "console"
+            self.config["terminal_visible"] = False
+        else:
+            # Скрыть консоль, показать терминал
+            self.console_frame.pack_forget()
+            self.terminal_panel.get_frame().pack(fill=tk.BOTH, expand=True)
+
+            self.terminal_tab_btn.configure(bg="#0a3d62", fg="white")
+            self.console_tab_btn.configure(bg=VSColorScheme.BG_MEDIUM,
+                                           fg=VSColorScheme.FG_LIGHT)
+            self._console_tab_active = "terminal"
+            self.config["terminal_visible"] = True
+
+            # Запустить терминал, если ещё не запущен
+            if not self.terminal_panel.running:
+                self.terminal_panel.start()
+            self.terminal_panel.focus()
+
+    def _clear_active_console(self):
+        """Очистить активную панель."""
+        if self._console_tab_active == "terminal":
+            try:
+                self.terminal_panel.text.delete("1.0", tk.END)
+                self.terminal_panel._input_start = "1.0"
+            except Exception:
+                pass
+        else:
+            self.clear_console()
+
+    def toggle_terminal(self):
+        """Показать/скрыть всю панель (и консоль, и терминал)."""
+        # Если панель скрыта совсем — показываем её и переключаемся на терминал
+        if not self.console_visible:
+            # Включаем консоль-панель обратно
+            pos = self.config.get("console_position", "bottom")
+            if pos == "bottom":
+                self.center_paned.add(self.console_area,
+                                      height=self.config.get("console_height", 200))
+            else:
+                self.center_paned.insert(0, self.console_area,
+                                         height=self.config.get("console_height", 200))
+            self.console_visible = True
+            self.show_console_var.set(True)
+            self.config["console_visible"] = True
+
+        # Переключаем на вкладку терминала
+        self._switch_console_tab("terminal")
+
     def toggle_console(self):
         if self.console_visible:
             self.center_paned.forget(self.console_area)
@@ -4512,6 +5332,11 @@ class CodeEditorApp:
         self.show_console_var = tk.BooleanVar(value=self.console_visible)
         vm.add_checkbutton(label="Показать консоль", variable=self.show_console_var,
                            command=self.toggle_console)
+
+        # Пункт "Терминал" в меню Вид
+        vm.add_separator()
+        vm.add_command(label="🖥️ Открыть терминал (Ctrl+`)",
+                       command=self.toggle_terminal)
         vm.add_separator()
         epm = tk.Menu(vm, tearoff=0)
         vm.add_cascade(label="Позиция проводника", menu=epm)
@@ -4642,6 +5467,11 @@ class CodeEditorApp:
                     self.open_find(); return "break"
                 if letter == 'g':
                     self.go_to_line(); return "break"
+
+            # Ctrl+` — открыть терминал
+            if ctrl and keysym in ('grave', 'quoteleft', 'ascientific'):
+                self.toggle_terminal()
+                return "break"
 
             # Ctrl+Plus / Ctrl+Minus
             if ctrl:
@@ -4905,26 +5735,89 @@ RealCode разработан на Python с использованием Tkinte
         self.highlighter = SyntaxHighlighter(self.editor)
         self.linter = Linter(self.editor, self)
 
+        # Автодополнение
+        self.autocomplete_popup = AutocompletePopup(
+            self.editor,
+            self.editor,
+            self.autocomplete_provider,
+            self._apply_autocomplete,
+        )
+        # Привязки клавиш для навигации в попапе
+        self.editor.bind('<Up>', self._ac_on_up, add='+')
+        self.editor.bind('<Down>', self._ac_on_down, add='+')
+        self.editor.bind('<Escape>', self._ac_on_escape, add='+')
+        self.editor.bind('<Tab>', self._ac_on_tab, add='+')
+        self.editor.bind('<Return>', self._ac_on_return, add='+')
+        self.editor.bind('<KP_Enter>', self._ac_on_return, add='+')
+
+        # Автодополнение
+        self.autocomplete_popup = AutocompletePopup(
+            self.editor,
+            self.editor,
+            self.autocomplete_provider,
+            self._apply_autocomplete,
+        )
+        # Привязки клавиш для навигации в попапе
+        self.editor.bind('<Up>', self._ac_on_up, add='+')
+        self.editor.bind('<Down>', self._ac_on_down, add='+')
+        self.editor.bind('<Escape>', self._ac_on_escape, add='+')
+        self.editor.bind('<Tab>', self._ac_on_tab, add='+')
+        self.editor.bind('<Return>', self._ac_on_return, add='+')
+        self.editor.bind('<KP_Enter>', self._ac_on_return, add='+')
+
     def _create_console_area(self):
         ui = get_default_ui_font()
         self.console_area = tk.Frame(self.center_paned, bg=VSColorScheme.BG_DARK)
-        header = tk.Frame(self.console_area, bg=VSColorScheme.STATUS_BG, height=25)
-        header.pack(fill=tk.X)
-        header.pack_propagate(False)
-        tk.Label(header, text="КОНСОЛЬ", bg=VSColorScheme.STATUS_BG, fg="white",
-                 font=(ui, 9, "bold"), padx=10).pack(side=tk.LEFT)
-        cb = tk.Label(header, text="🗑 Очистить", bg=VSColorScheme.STATUS_BG,
-                      fg="white", font=(ui, 9), padx=10, cursor="hand2")
+
+        # ─── Таб-бар для переключения КОНСОЛЬ / ТЕРМИНАЛ ───────────────
+        self.console_tabbar = tk.Frame(self.console_area, bg=VSColorScheme.BG_MEDIUM,
+                                       height=28)
+        self.console_tabbar.pack(fill=tk.X)
+        self.console_tabbar.pack_propagate(False)
+
+        self._console_tab_active = "console"  # или "terminal"
+
+        self.console_tab_btn = tk.Label(
+            self.console_tabbar, text="КОНСОЛЬ",
+            bg=VSColorScheme.STATUS_BG, fg="white",
+            font=(ui, 9, "bold"), padx=15, pady=5, cursor="hand2")
+        self.console_tab_btn.pack(side=tk.LEFT)
+        self.console_tab_btn.bind('<Button-1>',
+                                  lambda e: self._switch_console_tab("console"))
+
+        self.terminal_tab_btn = tk.Label(
+            self.console_tabbar, text="ТЕРМИНАЛ",
+            bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG_LIGHT,
+            font=(ui, 9, "bold"), padx=15, pady=5, cursor="hand2")
+        self.terminal_tab_btn.pack(side=tk.LEFT)
+        self.terminal_tab_btn.bind('<Button-1>',
+                                   lambda e: self._switch_console_tab("terminal"))
+
+        # ─── Кнопки справа (общие для обеих панелей) ───────────────────
+        # Кнопка "Очистить" — общая, работает с активной вкладкой
+        cb = tk.Label(self.console_tabbar, text="🗑 Очистить",
+                      bg=VSColorScheme.BG_MEDIUM, fg="white",
+                      font=(ui, 9), padx=10, cursor="hand2")
         cb.pack(side=tk.RIGHT)
-        cb.bind('<Button-1>', lambda e: self.clear_console())
-        xb = tk.Label(header, text="✕", bg=VSColorScheme.STATUS_BG, fg="white",
+        cb.bind('<Button-1>', lambda e: self._clear_active_console())
+
+        xb = tk.Label(self.console_tabbar, text="✕",
+                      bg=VSColorScheme.BG_MEDIUM, fg="white",
                       font=(ui, 10, "bold"), padx=10, cursor="hand2")
         xb.pack(side=tk.RIGHT)
         xb.bind('<Enter>', lambda e: xb.configure(bg="#e81123"))
-        xb.bind('<Leave>', lambda e: xb.configure(bg=VSColorScheme.STATUS_BG))
+        xb.bind('<Leave>', lambda e: xb.configure(bg=VSColorScheme.BG_MEDIUM))
         xb.bind('<Button-1>', lambda e: self.toggle_console())
 
-        cc = tk.Frame(self.console_area, bg=VSColorScheme.BG_DARK)
+        # ─── Контейнер для двух панелей ────────────────────────────────
+        self.console_body = tk.Frame(self.console_area, bg=VSColorScheme.BG_DARK)
+        self.console_body.pack(fill=tk.BOTH, expand=True)
+
+        # 1. Обычная консоль (существующий код)
+        self.console_frame = tk.Frame(self.console_body, bg=VSColorScheme.BG_DARK)
+        self.console_frame.pack(fill=tk.BOTH, expand=True)
+
+        cc = tk.Frame(self.console_frame, bg=VSColorScheme.BG_DARK)
         cc.pack(fill=tk.BOTH, expand=True)
         self.console = tk.Text(cc, wrap=tk.WORD, font=(get_default_mono_font(), 10),
                                bg=VSColorScheme.BG_DARK, fg=VSColorScheme.FG_LIGHT,
@@ -4936,6 +5829,16 @@ RealCode разработан на Python с использованием Tkinte
             bg=VSColorScheme.SCROLLBAR, troughcolor=VSColorScheme.BG_DARK, width=12)
         self.console_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.console.config(yscrollcommand=self.console_scrollbar.set)
+
+        # 2. Терминал (создаём сразу, но пакуем только когда нужен)
+        self.terminal_panel = TerminalPanel(self.console_body, self)
+        # НЕ пакуем сейчас — скрыт
+
+        # Если в конфиге сохранена активная вкладка — восстановим
+        if self.config.get("terminal_visible", False):
+            self._switch_console_tab("terminal")
+        else:
+            self._switch_console_tab("console")
 
     def _create_status_bar(self):
         ui = get_default_ui_font()
@@ -5018,6 +5921,10 @@ RealCode разработан на Python с использованием Tkinte
                 self.config["window_height"] = self.root.winfo_height()
             except Exception:
                 pass
+
+        # Останавливаем терминал, чтобы не осталось висящих процессов
+        if self.terminal_panel:
+            self.terminal_panel.stop()
 
         self.config["sidebar_width"] = self._get_explorer_width()
         self.config["console_height"] = self._get_console_height()
