@@ -1,0 +1,8 @@
+VERSION_REALCODE="4.2"
+DOWNLOAD_URL = "https://github.com/Kish-Mish122/RealCode/releases/latest"
+GITHUB_VERSION_URL_CONFIG = "https://api.github.com/repos/Kish-Mish122/RealCode/releases/latest"
+GITHUB_VERSION_MIN = "https://raw.githubusercontent.com/Kish-Mish122/realengine/refs/heads/main/minimal_version.json"
+PLUGIN_URL_CONF = "https://raw.githubusercontent.com/Kish-Mish122/RealCodeMarketplace/refs/heads/main/plugins.json"
+FORMSPREE_ID = "https://formspree.io/f/mojykrll"
+MIN_REALCODE_VERSION = "3.6.0"
+VERSION_CRASHPAD="1.0"

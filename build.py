@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
 # build.py - RealCode Builder
+
+import sys as _sys
+
+# ─── Форсируем UTF-8 для stdout/stderr (Windows cp1251 → utf-8) ───
+if _sys.platform == "win32":
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        _sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        try:
+            import io as _io
+            _sys.stdout = _io.TextIOWrapper(
+                _sys.stdout.buffer, encoding="utf-8", errors="replace")
+            _sys.stderr = _io.TextIOWrapper(
+                _sys.stderr.buffer, encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 import os
 import sys
 import subprocess
@@ -9,6 +27,7 @@ import shutil
 import argparse
 from datetime import datetime
 import platform
+
 
 # Папки для выходных бинарников
 OUTPUT_DIRS = {
@@ -208,13 +227,13 @@ VSVersionInfo(
     StringFileInfo([
       StringTable(u'040904B0', [
         StringStruct(u'CompanyName', u'K1sh-M1sh'),
-        StringStruct(u'FileDescription', u'RealCode for Scripting'),
-        StringStruct(u'FileVersion', u'4.1'),
+        StringStruct(u'FileDescription', u'RealCode'),
+        StringStruct(u'FileVersion', u'4.2'),
         StringStruct(u'InternalName', u'RealCode'),
         StringStruct(u'LegalCopyright', u'MIT'),
         StringStruct(u'OriginalFilename', u'RealCode.exe'),
         StringStruct(u'ProductName', u'RealCode'),
-        StringStruct(u'ProductVersion', u'4.1')])
+        StringStruct(u'ProductVersion', u'4.2')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [0x0409, 0x04B0])])
   ]
@@ -349,6 +368,120 @@ VSVersionInfo(
 # CLI
 # =====================================================================
 
+# =====================================================================
+# СБОРКА CRASHPAD
+# =====================================================================
+
+def get_crashpad_name(target_platform: str) -> str:
+    if target_platform == "windows":
+        return "RealCodeCrashPad.exe"
+    return "RealCodeCrashPad"
+
+
+def build_crashpad_for_platform(target_platform: str) -> bool:
+    """Собирает crashpad.py как отдельный бинарник в ту же папку."""
+    if target_platform != get_native_platform():
+        return True  # пропускаем, если не наша платформа
+
+    if not os.path.exists("crashpad.py"):
+        print("⚠️ crashpad.py не найден — пропускаю сборку CrashPad")
+        return True  # не ошибка, просто нет файла
+
+    print(f"\n{'─' * 60}")
+    print(f"  Сборка CrashPad под {target_platform.upper()}")
+    print(f"{'─' * 60}\n")
+
+    # Иконка — используем ту же, что у RealCode
+    icon_file = get_icon_path(target_platform)
+
+    # Имя выходного файла
+    crashpad_name = get_crashpad_name(target_platform)
+
+    cmd = [
+        sys.executable, "-m", "PyInstaller",
+        "--onefile",
+        f"--name={crashpad_name}",
+        "--noconfirm",
+        "--clean",
+    ]
+
+    # Иконка
+    if icon_file:
+        cmd.append(f"--icon={icon_file}")
+
+    # --windowed только для Windows — CrashPad тоже GUI (диалоги показывать)
+    if target_platform == "windows":
+        cmd.append("--windowed")
+
+    # Сам скрипт
+    cmd.append("crashpad.py")
+
+    print("🔨 Команда сборки CrashPad:")
+    print("   " + " ".join(cmd))
+    print()
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print("❌ ОШИБКА СБОРКИ CRASHPAD")
+            print(f"Код: {result.returncode}")
+            print(result.stderr)
+            return False
+
+        src_path = os.path.join("dist", crashpad_name)
+        if not os.path.exists(src_path):
+            print("⚠️ CrashPad не найден в dist/")
+            return False
+
+        out_dir = OUTPUT_DIRS.get(target_platform, "dist")
+        os.makedirs(out_dir, exist_ok=True)
+        final_path = os.path.join(out_dir, crashpad_name)
+
+        if os.path.exists(final_path):
+            try:
+                os.remove(final_path)
+            except Exception:
+                force_remove(final_path)
+
+        shutil.move(src_path, final_path)
+
+        # Linux/macOS — сделать исполняемым
+        if target_platform in ("linux", "macos"):
+            try:
+                os.chmod(final_path, 0o755)
+            except Exception:
+                pass
+
+        # Windows — СПРЯТАТЬ файл, чтобы пользователь не путался
+        if target_platform == "windows":
+            try:
+                import ctypes
+                FILE_ATTRIBUTE_HIDDEN = 0x02
+                ctypes.windll.kernel32.SetFileAttributesW(
+                    final_path, FILE_ATTRIBUTE_HIDDEN)
+                print("   🙈 Файл скрыт (HIDDEN attribute)")
+            except Exception as e:
+                print(f"   ⚠️ Не удалось скрыть файл: {e}")
+
+        size = os.path.getsize(final_path)
+        print(f"\n📦 CrashPad: {final_path}")
+        print(f"📏 Размер:   {size:,} байт ({size / 1024 / 1024:.2f} MB)")
+
+        # Очистка spec-файла
+        spec_file = f"{crashpad_name}.spec"
+        if os.path.exists(spec_file):
+            try:
+                os.remove(spec_file)
+            except Exception:
+                pass
+
+        return True
+
+    except Exception as e:
+        print(f"\n❌ Ошибка сборки CrashPad: {e}")
+        return False
+
 def main():
     parser = argparse.ArgumentParser(
         description="RealCode Builder — сборка под Windows / Linux / macOS",
@@ -413,7 +546,14 @@ def main():
     # Собираем
     success = True
     for t in buildable:
+        # 1. Основной RealCode
         ok = build_for_platform(t)
+        success = success and ok
+        if not ok:
+            break
+
+        # 2. CrashPad рядом
+        ok = build_crashpad_for_platform(t)
         success = success and ok
         if not ok:
             break

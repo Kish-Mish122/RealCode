@@ -11,7 +11,15 @@ import os
 import signal
 import re
 import threading
-import pty
+try:
+    import pty
+    import termios
+    import tty
+except ImportError:
+    pty = None
+    termios = None
+    tty = None
+
 from typing import List, Set
 import sys
 from pathlib import Path
@@ -284,7 +292,7 @@ DEFAULT_CONFIG = {
     "recent_projects": [],
     "smooth_scroll": True,
     "smooth_scroll_lines": 6,
-    "smooth_scroll_steps": 8,
+    "smooth_scroll_steps": 4,
     "smooth_scroll_delay_ms": 12,
     "autocomplete_enabled": True,
     "autocomplete_delay_ms": 250,
@@ -348,20 +356,20 @@ PACKAGING_AVAILABLE = packaging_ok
 # =====================================================================
 
 from config import DISCORD_ID_CONFIG
-from config import VERSION_REALCODE
-from config import DOWNLOAD_URL
-from config import GITHUB_VERSION_URL_CONFIG
+from config_public import VERSION_REALCODE
+from config_public import DOWNLOAD_URL
+from config_public import GITHUB_VERSION_URL_CONFIG
 from config import GITHUB_TOKEN
-from config import FORMSPREE_ID
-from config import MIN_REALCODE_VERSION
-from config import GITHUB_VERSION_MIN
-from config import PLUGIN_URL_CONF
+from config_public import FORMSPREE_ID
+from config_public import MIN_REALCODE_VERSION
+from config_public import GITHUB_VERSION_MIN
+from config_public import PLUGIN_URL_CONF
 from autocomplete import AutocompleteProvider
 
 DISCORD_ID = DISCORD_ID_CONFIG
 GITHUB_VERSION_URL = GITHUB_VERSION_URL_CONFIG
 
-APP_NAME = "RealCode"
+APP_NAME = f"RealCode v.{VERSION_REALCODE}"
 VERSION = VERSION_REALCODE
 DISCORD_CLIENT_ID = DISCORD_ID
 MIN_REALCODE = MIN_REALCODE_VERSION
@@ -1167,6 +1175,38 @@ class SettingsDialog:
         self.tab_var = tk.IntVar(value=self.config["tab_size"])
         tk.Spinbox(parent, from_=2, to=8, textvariable=self.tab_var, width=10
                    ).grid(row=row, column=1, sticky="w", pady=5, padx=10)
+
+        # ─── Настройки плавной прокрутки ───────────────────────────
+        row += 1
+        tk.Label(parent, text="Строк за клик колеса:",
+                 bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG
+                 ).grid(row=row, column=0, sticky="w", pady=5, padx=10)
+        self.smooth_lines_var = tk.IntVar(
+            value=self.config.get("smooth_scroll_lines", 6))
+        tk.Spinbox(parent, from_=1, to=30,
+                   textvariable=self.smooth_lines_var, width=10
+                   ).grid(row=row, column=1, sticky="w", pady=5, padx=10)
+
+        row += 1
+        tk.Label(parent, text="Кадров анимации:",
+                 bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG
+                 ).grid(row=row, column=0, sticky="w", pady=5, padx=10)
+        self.smooth_steps_var = tk.IntVar(
+            value=self.config.get("smooth_scroll_steps", 4))
+        tk.Spinbox(parent, from_=2, to=20,
+                   textvariable=self.smooth_steps_var, width=10
+                   ).grid(row=row, column=1, sticky="w", pady=5, padx=10)
+
+        row += 1
+        tk.Label(parent, text="Задержка между кадрами (мс):",
+                 bg=VSColorScheme.BG_MEDIUM, fg=VSColorScheme.FG
+                 ).grid(row=row, column=0, sticky="w", pady=5, padx=10)
+        self.smooth_delay_var = tk.IntVar(
+            value=self.config.get("smooth_scroll_delay_ms", 12))
+        tk.Spinbox(parent, from_=5, to=50,
+                   textvariable=self.smooth_delay_var, width=10
+                   ).grid(row=row, column=1, sticky="w", pady=5, padx=10)
+
         row += 1
         ttk.Separator(parent, orient='horizontal').grid(row=row, column=0, columnspan=2,
                                                         sticky="ew", pady=10, padx=10)
@@ -1252,6 +1292,9 @@ class SettingsDialog:
         self.config["minimap_enabled"] = self.minimap_var.get()
         self.config["show_hidden_files"] = self.hidden_var.get()
         self.config["smooth_scroll"] = self.smooth_scroll_var.get()
+        self.config["smooth_scroll_lines"] = self.smooth_lines_var.get()
+        self.config["smooth_scroll_steps"] = self.smooth_steps_var.get()
+        self.config["smooth_scroll_delay_ms"] = self.smooth_delay_var.get()
         self.callback(self.config)
         self.window.destroy()
 
@@ -1345,7 +1388,7 @@ class DiscordPresence:
                           "idle": "Не за компьютером"}.get(self.current_state, "Пишет код...")
             details = f"{filename} • {project_name}"
             buttons = [
-                {"label": "RealCode in GitLab", "url": "https://github.com/Kish-Mish122/RealCode"},
+                {"label": "RealCode in GitHab", "url": "https://github.com/Kish-Mish122/RealCode"},
                 {"label": "Download RealCode", "url": "https://github.com/Kish-Mish122/RealCode/releases"}
             ]
             self.rpc.update(state=state_text, details=details, start=self.start_time,
@@ -2342,11 +2385,11 @@ class GitCommitDialog:
     def _commit(self):
         message = self.msg.get("1.0", tk.END).strip()
         if not message:
-            messagebox.showwarning("Git", "Поле для сообщения о коммите - обязательна!")
+            messagebox.showwarning("Git: Ошибка", "Поле для сообщения о коммите - обязательна!")
             return
         selected = [p for p, c in self.checked.items() if c]
         if not selected:
-            messagebox.showwarning("Git", "Выберите хотя бы один файл.")
+            messagebox.showwarning("Git: Ошибка", "Выберите хотя бы один файл.")
             return
         self.window.destroy()
         app = self.app
@@ -3172,16 +3215,15 @@ class TerminalPanel:
                 # Linux / macOS — PTY
                 master_fd, slave_fd = pty.openpty()
 
-                # ★ Отключаем ECHO на slave — иначе bash дублирует ввод,
-                #   который мы сами печатаем в tk.Text
-                import termios
-                try:
-                    attrs = termios.tcgetattr(slave_fd)
-                    attrs[3] &= ~termios.ECHO     # не печатать ввод
-                    attrs[3] &= ~termios.ECHONL   # не печатать \n
-                    termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
-                except Exception as e:
-                    print(f"Не удалось отключить ECHO: {e}")
+                # ★ Безопасное отключение ECHO на Unix-системах
+                if termios is not None:
+                    try:
+                        attrs = termios.tcgetattr(slave_fd)
+                        attrs[3] &= ~termios.ECHO     # не печатать ввод
+                        attrs[3] &= ~termios.ECHONL   # не печатать \n
+                        termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+                    except Exception as e:
+                        print(f"Не удалось отключить ECHO: {e}")
 
                 self._pty_master = master_fd
                 self.process = subprocess.Popen(
@@ -3206,6 +3248,7 @@ class TerminalPanel:
             self.text.focus_set()
         except Exception as e:
             self._append_text(f"❌ Ошибка запуска: {e}\n")
+
 
     def stop(self):
         self.running = False
@@ -3308,7 +3351,7 @@ class TerminalPanel:
         try:
             data = self._ansi_buffer + data
 
-            # 1. Отрезаем незавершённый ESC-хвост (оставим до след. куска)
+            # Отрезаем незавершённый ESC-хвост (оставим до след. куска)
             tail = re.search(r'\x1b[^\x1b]*$', data)
             if tail:
                 self._ansi_buffer = tail.group(0)
@@ -3316,18 +3359,17 @@ class TerminalPanel:
             else:
                 self._ansi_buffer = ""
 
-            # 2. Чистим завершённые ESC-последовательности
+            # Чистим завершённые ESC-последовательности
             data = _ANSI_RE.sub("", data)
 
-            # 3. ★ Чистим VTE-мусор, у которого ESC уже был съеден
+            # Чистим VTE-мусор, у которого ESC уже был съеден
             data = _VTE_MUCK_RE.sub("", data)
 
-            # 4. Остатки одиночных управляющих байтов
+            # Остатки одиночных управляющих байтов
             data = data.replace("\x07", "").replace("\x00", "")
             data = data.replace("\r\n", "\n").replace("\r", "")
 
-            # 5. Убираем "повисшие" цифры + `;` в начале строк, 
-            #    которые остались от обрывков типа "07;file://"
+            # Убираем "повисшие" цифры + `;` в начале строк, которые остались от обрывков типа "07;file://"
             data = re.sub(r'^\d{0,3};(?=\S)', '', data, flags=re.MULTILINE)
 
             if not data:
@@ -3571,8 +3613,17 @@ class CodeEditorApp:
         # Для плавного скролла
         self._scroll_anim_id = None
 
+        # === Запускаем CrashPad в фоне ===
+        self.root.after(2000, self._launch_crashpad)  # через 2 сек после старта
+
         # Применяем сохранённые размеры панелей после отрисовки окна
         self.root.after(150, self._apply_saved_pane_sizes)
+
+        # === CrashPad: heartbeat и лог ===
+        self._heartbeat_thread = None
+        self._heartbeat_stop = False
+        self._setup_crashpad_support()
+
         threading.Thread(target=self._check_updates_thread, daemon=True).start()
         # Автосохранение размеров панелей при движении саша
         self.main_paned.bind("<ButtonRelease-1>", self._autosave_pane_sizes)
@@ -4039,6 +4090,207 @@ class CodeEditorApp:
         fn = self.current_project.files.get(tab)
         return bool(fn and fn.endswith('.py'))
 
+    # ------------------------------------------------------------------
+    # CRASHPAD SUPPORT (heartbeat + лог)
+    # ------------------------------------------------------------------
+    def _get_crashpad_dir(self) -> str:
+        """Папка .RLCode рядом с ИСПОЛНЯЕМЫМ ФАЙЛОМ (не с проектом!),
+        чтобы CrashPad всегда её находил."""
+        app_dir = get_app_dir()
+        d = os.path.join(app_dir, ".RLCode")
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            d = os.path.abspath(".")
+        return d
+
+    def _setup_crashpad_support(self):
+        """Настраивает лог-файл и запускает поток heartbeat."""
+        self._crashpad_dir = self._get_crashpad_dir()
+        self._heartbeat_path = os.path.join(self._crashpad_dir, "heartbeat.json")
+        self._log_path = os.path.join(self._crashpad_dir, "realcode.log")
+
+        # Пишем initial heartbeat
+        self._write_heartbeat(state="starting")
+
+        # Стартуем поток
+        self._heartbeat_stop = False
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+
+        # Хук на необработанные исключения
+        def _crash_hook(exc_type, exc_value, exc_tb):
+            try:
+                import traceback as _tb
+                with open(self._log_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n=== CRASH {datetime.now().isoformat()} ===\n")
+                    _tb.print_exception(exc_type, exc_value, exc_tb, file=f)
+            except Exception:
+                pass
+            self._write_heartbeat(state="crashed", extra={
+                "error": f"{exc_type.__name__}: {exc_value}"
+            })
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+        sys.excepthook = _crash_hook
+
+    def _write_heartbeat(self, state: str = "running", extra: dict = None):
+        """Пишет файл-пульс. CrashPad читает его и понимает, живой ли RealCode."""
+        try:
+            data = {
+                "pid": os.getpid(),
+                "state": state,
+                "timestamp": time.time(),
+                "version": VERSION,
+                "project": self.config.get("project_path", "."),
+                "current_file": None,
+            }
+            try:
+                if self.current_project and self.current_project.current_tab:
+                    data["current_file"] = self.current_project.files.get(
+                        self.current_project.current_tab)
+            except Exception:
+                pass
+            if extra:
+                data.update(extra)
+
+            # Пишем атомарно: сначала .tmp, потом rename
+            tmp = self._heartbeat_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())   # ← гарантируем запись на диск
+                except Exception:
+                    pass
+            os.replace(tmp, self._heartbeat_path)
+        except Exception:
+            pass
+
+    def _heartbeat_loop(self):
+        """Каждые 5 секунд обновляет heartbeat, пока приложение живо."""
+        while not self._heartbeat_stop:
+            try:
+                # Двойная проверка флага ПЕРЕД записью — уменьшает гонку
+                if self._heartbeat_stop:
+                    return
+                self._write_heartbeat(state="running")
+            except Exception:
+                pass
+            # Спим раз в 5 сек, но с проверкой флага
+            for _ in range(50):
+                if self._heartbeat_stop:
+                    return
+                time.sleep(0.1)
+
+    def _shutdown_crashpad(self):
+        """Помечаем чистый выход — CrashPad поймёт, что это не краш."""
+        try:
+            # 1. Ставим флаг остановки — поток прекратит писать running
+            self._heartbeat_stop = True
+            # 2. Ждём, пока поток heartbeat завершится (макс 1 сек),
+            #    чтобы он не перезаписал clean_shutdown обратно на running
+            if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+                self._heartbeat_thread.join(timeout=1.0)
+            # 3. Только теперь пишем финальный статус — никто не помешает
+            self._write_heartbeat(state="clean_shutdown")
+        except Exception:
+            pass
+
+    def _is_pid_alive(self, pid: int) -> bool:
+        """Проверяет, жив ли процесс по PID."""
+        if pid <= 0:
+            return False
+        try:
+            if is_windows():
+                import ctypes
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                h = ctypes.windll.kernel32.OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                if not h:
+                    return False
+                code = ctypes.c_ulong()
+                ok = ctypes.windll.kernel32.GetExitCodeProcess(
+                    h, ctypes.byref(code))
+                ctypes.windll.kernel32.CloseHandle(h)
+                return ok and code.value == 259  # STILL_ACTIVE
+            else:
+                os.kill(pid, 0)
+                return True
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------
+    # CRASHPAD AUTO-LAUNCH
+    # ------------------------------------------------------------------
+    def _launch_crashpad(self):
+        """Тихо запускает CrashPad в фоне, чтобы следил за RealCode."""
+        # 1. Защита от рекурсии: если RealCode запущен ИЗ CrashPad — не запускаем
+        if os.environ.get("_RLCODE_CRASHPAD_RUNNING"):
+            return
+
+        # 2. Защита от двойного запуска: если CrashPad уже следит за нами — не дублируем
+        app_dir = get_app_dir()
+        marker = os.path.join(app_dir, ".crashpad_lock")
+        try:
+            if os.path.exists(marker):
+                # Проверяем, живой ли процесс из маркера
+                with open(marker, "r") as f:
+                    old_pid = int(f.read().strip() or "0")
+                if old_pid and self._is_pid_alive(old_pid):
+                    print(f"🛡️ CrashPad уже запущен (PID {old_pid})")
+                    return
+        except Exception:
+            pass
+
+        app_dir = get_app_dir()
+        candidates = [
+            os.path.join(app_dir, "RealCodeCrashPad.exe"),
+            os.path.join(app_dir, "crashpad.exe"),
+            os.path.join(app_dir, "crashpad.py"),
+        ]
+        crashpad_path = None
+        for c in candidates:
+            if os.path.exists(c):
+                crashpad_path = c
+                break
+
+        if not crashpad_path:
+            return  # CrashPad не установлен — работаем без него
+
+        try:
+            if crashpad_path.endswith(".py"):
+                cmd = [sys.executable, crashpad_path,
+                       "--watch-pid", str(os.getpid())]
+            else:
+                cmd = [crashpad_path, "--watch-pid", str(os.getpid())]
+
+            creationflags = 0
+            if is_windows():
+                creationflags = 0x08000000  # CREATE_NO_WINDOW
+
+            env = os.environ.copy()
+            env["_RLCODE_CRASHPAD_RUNNING"] = "1"  # защита от рекурсии
+
+            proc = subprocess.Popen(
+                cmd,
+                cwd=app_dir,
+                env=env,
+                creationflags=creationflags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            # Пишем маркер с PID, чтобы не запустить второй CrashPad
+            try:
+                with open(marker, "w") as f:
+                    f.write(str(proc.pid))
+            except Exception:
+                pass
+            print(f"🛡️ CrashPad запущен в фоне (PID {proc.pid})")
+        except Exception as e:
+            print(f"⚠️ Не удалось запустить CrashPad: {e}")
+
     def _check_updates_thread(self):
         time.sleep(2)
         self.updater.check_for_updates(silent=False)
@@ -4173,8 +4425,7 @@ class CodeEditorApp:
     def select_tab(self, tab):
         if not self.current_project or tab not in self.current_project.tabs:
             return
-        # Сохраняем позицию прокрутки старой вкладки
-        self._cancel_scroll_animation()
+
         if (self.current_project.current_tab
                 and self.current_project.current_tab in self.current_project.file_contents
                 and self.editor):
@@ -4970,6 +5221,15 @@ class CodeEditorApp:
     # КОНСОЛЬ / STDOUT
     # ------------------------------------------------------------------
     def log(self, text):
+        # 1. Пишем в crashpad-лог
+        try:
+            if hasattr(self, "_log_path"):
+                with open(self._log_path, "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {text}\n")
+        except Exception:
+            pass
+
+        # 2. Пишем во встроенную консоль
         if not self.console or not self.console.winfo_exists():
             return
         try:
@@ -5884,12 +6144,11 @@ RealCode разработан на Python с использованием Tkinte
     # ЗАКРЫТИЕ
     # ------------------------------------------------------------------
     def on_closing(self):
+        # 1. Сначала — диалог о сохранении (пользователь может отменить)
         if self.current_project:
             unsaved = [t.title for t in self.current_project.tabs if t.modified]
             if unsaved:
-                r = messagebox.askyesnocancel(
-                    "Несохранённые изменения",
-                    f"Вы не сохранили:\n{', '.join(unsaved)}\n\nСохранить перед выходом?")
+                r = messagebox.askyesnocancel(...)
                 if r is None:
                     return
                 elif r:
@@ -5899,6 +6158,11 @@ RealCode разработан на Python с использованием Tkinte
                             self.save_file()
             self.save_project_state()
 
+        # 2. Пользователь подтвердил закрытие — СРАЗУ помечаем clean_shutdown
+        self._shutdown_crashpad()
+        self._cancel_scroll_animation()
+
+        # 3. Дальше — долгие операции (Discord, сохранение, что угодно)
         if self.discord:
             self.discord.disconnect()
             time.sleep(0.2)
@@ -5931,6 +6195,15 @@ RealCode разработан на Python с использованием Tkinte
 
         self.config["last_opened_folder"] = self.config.get("project_path", ".")
         self._cancel_scroll_animation()
+
+        # Удаляем маркер CrashPad
+        try:
+            marker = os.path.join(get_app_dir(), ".crashpad_lock")
+            if os.path.exists(marker):
+                os.remove(marker)
+        except Exception:
+            pass
+
         save_config(self.config)
 
         # sys.stdout = self.original_stdout
