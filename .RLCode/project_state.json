@@ -4,12 +4,13 @@
         "E:/RealCode\\main.py",
         "E:/RealCode\\crashpad.py",
         "E:/RealCode\\build.py",
-        "E:/RealCode\\config_public.py"
+        "E:/RealCode\\config_public.py",
+        "E:/RealCode\\.github\\workflows\\build.yml"
     ],
     "expanded_folders": [
         ""
     ],
-    "last_active_tab": "E:/RealCode\\crashpad.py",
+    "last_active_tab": "E:/RealCode\\.github\\workflows\\build.yml",
     "window_state": {},
     "ignored_lint": [
         [

@@ -17,15 +17,12 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             artifact_name: RealCode-linux
-            exe_name: RealCode
           - os: windows-latest
             platform: windows
             artifact_name: RealCode-windows
-            exe_name: RealCode.exe
           - os: macos-latest
             platform: macos
             artifact_name: RealCode-macos
-            exe_name: RealCode
 
     steps:
       - name: Checkout
@@ -52,7 +49,7 @@ jobs:
         env:
           CONFIG_PY: ${{ secrets.CONFIG_PY }}
 
-      - name: Build binary
+      - name: Build RealCode + CrashPad
         shell: bash
         env:
           PYTHONIOENCODING: utf-8
@@ -60,14 +57,15 @@ jobs:
         run: |
           python build.py --${{ matrix.platform }}
 
-      - name: Upload artifact
+      - name: Upload artifact (RealCode + CrashPad)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
+          # Загружаем ВСЮ папку с бинарниками — там и RealCode, и CrashPad
           path: |
-            Linux_Bin/RealCode
-            Windows_Bin/RealCode.exe
-            MacOS_Bin/RealCode
+            Linux_Bin/
+            Windows_Bin/
+            MacOS_Bin/
           if-no-files-found: error
 
   release:
@@ -88,16 +86,35 @@ jobs:
         run: |
           mkdir -p release
 
-          # Windows
-          find artifacts -name "RealCode.exe" -exec cp {} release/RealCode-windows.exe \;
+          # ─── Windows ────────────────────────────────────────────
+          find artifacts -name "RealCode.exe" \
+              -path "*/Windows_Bin/*" \
+              -exec cp {} release/RealCode-windows.exe \;
+          find artifacts -name "RealCodeCrashPad.exe" \
+              -path "*/Windows_Bin/*" \
+              -exec cp {} release/RealCodeCrashPad-windows.exe \;
 
-          # Linux
-          find artifacts -name "RealCode" -path "*/Linux_Bin/*" -exec cp {} release/RealCode-linux \;
+          # ─── Linux ──────────────────────────────────────────────
+          find artifacts -name "RealCode" \
+              -path "*/Linux_Bin/*" \
+              -not -name "*CrashPad*" \
+              -exec cp {} release/RealCode-linux \;
+          find artifacts -name "RealCodeCrashPad" \
+              -path "*/Linux_Bin/*" \
+              -exec cp {} release/RealCodeCrashPad-linux \;
           chmod +x release/RealCode-linux || true
+          chmod +x release/RealCodeCrashPad-linux || true
 
-          # macOS
-          find artifacts -name "RealCode" -path "*/MacOS_Bin/*" -exec cp {} release/RealCode-macos \;
+          # ─── macOS ──────────────────────────────────────────────
+          find artifacts -name "RealCode" \
+              -path "*/MacOS_Bin/*" \
+              -not -name "*CrashPad*" \
+              -exec cp {} release/RealCode-macos \;
+          find artifacts -name "RealCodeCrashPad" \
+              -path "*/MacOS_Bin/*" \
+              -exec cp {} release/RealCodeCrashPad-macos \;
           chmod +x release/RealCode-macos || true
+          chmod +x release/RealCodeCrashPad-macos || true
 
           echo "=== Файлы релиза ==="
           ls -lh release/

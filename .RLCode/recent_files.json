@@ -1,8 +1,9 @@
 [
+    "E:/RealCode\\.github\\workflows\\build.yml",
+    "E:/RealCode\\build.py",
     "E:/RealCode\\crashpad.py",
     "E:/RealCode\\config_public.py",
     "E:/RealCode\\main.py",
-    "E:/RealCode\\build.py",
     "E:/RealCode\\config.py",
     "E:/RealCode/config_public.py",
     "E:/RealCode/crashpad.py",
@@ -12,7 +13,6 @@
     "/home/k1sh-m1sh/Рабочий стол/RealCode/build_standalone.sh",
     "E:/RealCode\\.gitignore",
     "E:/RealCode\\CODE_GITLAB.txt",
-    "E:/RealCode\\.github\\workflows\\build.yml",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/TEST.cpp",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/.gitignore",
     "/home/k1sh-m1sh/Рабочий стол/RealCode/plugin/cpp_csharp_support/manifest.json",
